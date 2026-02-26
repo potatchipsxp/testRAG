@@ -4,12 +4,15 @@ benchmark_incidents.py
 ----------------------
 Evaluates a RAG configuration against the 25 synthetic PaaS incidents.
 
+One focused diagnostic question per incident, framed as an operator would
+ask it: "Error X is happening for app Y, what is the problem?"
+
 Two evaluation layers:
   1. RETRIEVAL — did the right log chunks come back?
-     Scored by checking whether expected signal phrases appear in retrieved text.
+     Scored by checking whether expected signal phrases appear in the
+     combined text of retrieved chunks.
 
-  2. ANSWER — did the LLM correctly diagnose / recommend a fix?
-     Scored by checking whether required answer keywords appear in the response.
+  2. ANSWER — did the LLM correctly diagnose the root cause?
      Graded: full_credit | partial | miss
 
 Results are saved to benchmark_results.json and a summary is printed.
@@ -18,17 +21,14 @@ Usage:
     python benchmark_incidents.py
 
 Configure the CONFIG block to match your build_index.py settings.
-All other settings (questions, expected signals) are pre-populated.
 """
 
 import json
-import re
 import sys
 import time
 from pathlib import Path
 from datetime import datetime
 
-# Reuse helpers from query_index.py (must be in same directory)
 try:
     from query_index import (
         make_collection_name, get_collection,
@@ -52,8 +52,8 @@ CHUNK_SIZE        = 1
 CHUNK_OVERLAP     = 0
 
 LLM_MODEL         = "llama3.2"
-N_RESULTS         = 15   # slightly wider than default to give retrieval a fair chance
-VERBOSE           = False   # set True to see LLM answers as they run
+N_RESULTS         = 15   # slightly wider to give retrieval a fair chance
+VERBOSE           = False  # set True to print LLM answers as they run
 
 RESULTS_FILE      = "benchmark_results.json"
 
@@ -61,269 +61,347 @@ RESULTS_FILE      = "benchmark_results.json"
 # ============================================================================
 # BENCHMARK CASES
 #
-# Each case has:
-#   incident_id      : for grouping in results
-#   tier             : 1 / 2 / 3
-#   question_type    : "retrieval_probe" | "diagnosis" | "remediation"
-#   question         : the natural-language query
-#   where_filter     : optional ChromaDB metadata pre-filter
-#   retrieval_signals: list of strings — at least one must appear in any
-#                      retrieved chunk's text for retrieval to pass.
-#                      Use short, distinctive substrings from the actual
-#                      log messages in the incident files.
-#   answer_required  : ALL of these substrings (case-insensitive) must
-#                      appear in the LLM answer for full credit.
-#   answer_partial   : If answer_required fails, check these — any hit
-#                      gives partial credit (shows partial understanding).
+# One case per incident.  Each case has:
+#
+#   incident_id      : INC-001 … INC-025
+#   tier             : 1 (simple), 2 (cross-component), 3 (complex/distributed)
+#   app_id           : the affected application identifier
+#   org              : the org the app belongs to
+#   question         : operator-style question referencing the actual symptom
+#                      and application so the retrieval must target this incident
+#   where_filter     : optional ChromaDB metadata pre-filter (or None)
+#   retrieval_signals: short distinctive substrings from the real log messages —
+#                      at least ONE must appear in the retrieved chunks to pass
+#   answer_required  : ALL of these substrings (case-insensitive) must appear
+#                      in the LLM answer for full_credit
+#   answer_partial   : if answer_required fails, any hit here gives partial credit
 # ============================================================================
 
 BENCHMARK_CASES = [
 
-    # ── TIER 1 ───────────────────────────────────────────────────────────────
+    # ── TIER 1 — Single-component failures ──────────────────────────────────
 
     {
         "incident_id": "INC-001",
         "tier": 1,
-        "question_type": "retrieval_probe",
-        "question": "An app is repeatedly crashing. What port is it listening on and what port does the platform expect?",
+        "app_id": "app-q0k5oz",
+        "org": "org-payments",
+        "question": (
+            "payments-api (app-q0k5oz) in org-payments is crash-looping: "
+            "the platform health check reports 'connection refused' on port 8080 "
+            "but the container starts successfully. What is the root cause?"
+        ),
         "where_filter": None,
-        "retrieval_signals": ["port 8080", "port 3000", "health check failed"],
+        "retrieval_signals": [
+            "port 8080",
+            "port 3000",
+            "health check failed",
+            "crash loop",
+        ],
         "answer_required": ["3000", "8080"],
-        "answer_partial":  ["port", "health check"],
-    },
-    {
-        "incident_id": "INC-001",
-        "tier": 1,
-        "question_type": "diagnosis",
-        "question": "An app instance is entering a crash loop with repeated health check failures. What is the root cause?",
-        "where_filter": {"level": "ERROR"},
-        "retrieval_signals": ["health check failed", "port 8080", "Listening on 0.0.0.0:3000"],
-        "answer_required": ["port", "8080"],
-        "answer_partial":  ["health check", "crash"],
-    },
-    {
-        "incident_id": "INC-001",
-        "tier": 1,
-        "question_type": "remediation",
-        "question": "How should an app be fixed when the platform health check can't connect but the app starts successfully?",
-        "where_filter": None,
-        "retrieval_signals": ["port 8080", "Listening on 0.0.0.0:3000", "health check"],
-        "answer_required": ["port", "$PORT"],
-        "answer_partial":  ["environment variable", "8080", "binding"],
+        "answer_partial":  ["port", "health check", "$PORT"],
     },
 
     {
         "incident_id": "INC-002",
         "tier": 1,
-        "question_type": "diagnosis",
-        "question": "An app was killed by the platform. What resource was exhausted and what was the app writing?",
+        "app_id": "app-ocmoe0",
+        "org": "org-analytics",
+        "question": (
+            "app-ocmoe0 in org-analytics was killed by the platform with "
+            "'disk_quota_exceeded'. The app was running fine for hours before "
+            "this. What is consuming the disk and what should be changed to "
+            "prevent recurrence?"
+        ),
         "where_filter": None,
-        "retrieval_signals": ["disk quota", "no space left on device", "app.log"],
-        "answer_required": ["disk", "quota"],
-        "answer_partial":  ["space", "log"],
-    },
-    {
-        "incident_id": "INC-002",
-        "tier": 1,
-        "question_type": "remediation",
-        "question": "What should be done to prevent a container from being killed due to disk usage growth?",
-        "where_filter": None,
-        "retrieval_signals": ["disk quota", "no space left", "container_disk_usage"],
-        "answer_required": ["log rotation", "quota"],
-        "answer_partial":  ["disk", "syslog", "limit"],
+        "retrieval_signals": [
+            "disk quota",
+            "no space left on device",
+            "app.log",
+            "container_disk_usage",
+        ],
+        "answer_required": ["disk", "log"],
+        "answer_partial":  ["quota", "rotation", "ephemeral"],
     },
 
     {
         "incident_id": "INC-003",
         "tier": 1,
-        "question_type": "diagnosis",
-        "question": "An app fails to start and exits with status 1. What error appears in stderr and what service is it trying to reach?",
+        "app_id": "app-ia54l8",
+        "org": "org-devops",
+        "question": (
+            "app-ia54l8 in org-devops crashes immediately on startup with "
+            "exit_status=1. The stderr shows a network error when trying to "
+            "connect to its bound PostgreSQL service. What is causing the "
+            "failure?"
+        ),
         "where_filter": {"level": "ERROR"},
-        "retrieval_signals": ["gaierror", "postgres-svc", "Name or service not known"],
+        "retrieval_signals": [
+            "gaierror",
+            "Name or service not known",
+            "postgres-svc",
+        ],
         "answer_required": ["dns", "postgres"],
-        "answer_partial":  ["hostname", "not known", "service"],
+        "answer_partial":  ["hostname", "resolve", "service"],
     },
 
     {
         "incident_id": "INC-004",
         "tier": 1,
-        "question_type": "retrieval_probe",
-        "question": "Show log evidence of a container being killed due to memory usage.",
+        "app_id": "app-z5lhyd",
+        "org": "org-payments",
+        "question": (
+            "app-z5lhyd in org-payments keeps crashing with 'memory_limit_exceeded'. "
+            "Metrics show memory climbing steadily before each crash. "
+            "What JVM error is causing the container to be killed?"
+        ),
         "where_filter": None,
-        "retrieval_signals": ["OOM", "OutOfMemoryError", "memory limit", "oom"],
-        "answer_required": ["memory", "512"],
-        "answer_partial":  ["killed", "OOM", "heap"],
-    },
-    {
-        "incident_id": "INC-004",
-        "tier": 1,
-        "question_type": "diagnosis",
-        "question": "Memory metrics show a steady climb before an app crash. What is the likely cause and what JVM error confirms it?",
-        "where_filter": None,
-        "retrieval_signals": ["OutOfMemoryError", "memory_bytes", "99% quota"],
+        "retrieval_signals": [
+            "OutOfMemoryError",
+            "memory_bytes",
+            "OOM kill",
+            "99% quota",
+        ],
         "answer_required": ["OutOfMemoryError", "heap"],
-        "answer_partial":  ["memory", "quota", "gc"],
+        "answer_partial":  ["memory", "gc", "quota", "512"],
     },
 
     {
         "incident_id": "INC-005",
         "tier": 1,
-        "question_type": "diagnosis",
-        "question": "An app suddenly cannot connect to its message queue at midnight. What security error appears and why?",
+        "app_id": "app-p8hcke",
+        "org": "org-platform",
+        "question": (
+            "app-p8hcke in org-platform suddenly started returning 503s at "
+            "midnight. The app's background queue processor logs show "
+            "'CERTIFICATE_VERIFY_FAILED' when connecting to its RabbitMQ binding. "
+            "What happened and how should it be fixed?"
+        ),
         "where_filter": None,
-        "retrieval_signals": ["CERTIFICATE_VERIFY_FAILED", "certificate has expired", "amqps://"],
+        "retrieval_signals": [
+            "CERTIFICATE_VERIFY_FAILED",
+            "certificate has expired",
+            "amqps://",
+        ],
         "answer_required": ["certificate", "expired"],
-        "answer_partial":  ["ssl", "tls", "rabbitmq"],
-    },
-    {
-        "incident_id": "INC-005",
-        "tier": 1,
-        "question_type": "remediation",
-        "question": "How should a TLS certificate expiration on a bound service be resolved in a PaaS environment?",
-        "where_filter": None,
-        "retrieval_signals": ["certificate has expired", "CERTIFICATE_VERIFY_FAILED", "amqps://"],
-        "answer_required": ["bind", "certificate"],
-        "answer_partial":  ["rotate", "unbind", "service", "credential"],
+        "answer_partial":  ["tls", "ssl", "rabbitmq", "bind"],
     },
 
     {
         "incident_id": "INC-006",
         "tier": 1,
-        "question_type": "diagnosis",
-        "question": "A Node.js app build fails with a package integrity error. What package failed and what does the error code indicate?",
+        "app_id": "app-7zwece",
+        "org": "org-devops",
+        "question": (
+            "app-7zwece in org-devops is failing to stage. The build log shows "
+            "'EINTEGRITY: sha512 integrity check failed for express@4.18.2'. "
+            "The same app deployed successfully last week. What is the root cause?"
+        ),
         "where_filter": None,
-        "retrieval_signals": ["EINTEGRITY", "sha512", "express@4.18.2"],
+        "retrieval_signals": [
+            "EINTEGRITY",
+            "sha512",
+            "express@4.18.2",
+            "buildpack cache",
+        ],
         "answer_required": ["integrity", "cache"],
-        "answer_partial":  ["npm", "sha", "express"],
+        "answer_partial":  ["npm", "sha", "corrupt"],
     },
 
     {
         "incident_id": "INC-007",
         "tier": 1,
-        "question_type": "diagnosis",
-        "question": "Users are getting 502 errors immediately after a deployment that completed successfully. What does the router report?",
+        "app_id": "app-bcwwwh",
+        "org": "org-analytics",
+        "question": (
+            "app-bcwwwh in org-analytics deployed successfully — Diego shows "
+            "2/2 instances running — but every request to api.example.com "
+            "returns 502. The router logs 'No route registered'. What was "
+            "missed during deployment?"
+        ),
         "where_filter": {"level": "WARN"},
-        "retrieval_signals": ["No route registered", "502", "api.example.com"],
-        "answer_required": ["route", "mapped"],
-        "answer_partial":  ["502", "backend", "register"],
+        "retrieval_signals": [
+            "No route registered",
+            "502",
+            "api.example.com",
+        ],
+        "answer_required": ["route", "map"],
+        "answer_partial":  ["502", "backend", "cf map-route"],
     },
 
-    # ── TIER 2 ───────────────────────────────────────────────────────────────
+    # ── TIER 2 — Cross-component failures ───────────────────────────────────
 
     {
         "incident_id": "INC-008",
         "tier": 2,
-        "question_type": "retrieval_probe",
-        "question": "Find log entries showing database connection pool saturation.",
+        "app_id": "app-sxbvtt",
+        "org": "org-payments",
+        "question": (
+            "app-sxbvtt (payments-api) in org-payments is returning sustained "
+            "503s. Scaling out to more instances did not help. The metrics show "
+            "db_pool_active_connections=20/20. What is the actual bottleneck "
+            "and why did adding instances not resolve it?"
+        ),
         "where_filter": None,
-        "retrieval_signals": ["pool exhausted", "db_pool_active_connections=20", "connection pool exhausted"],
-        "answer_required": ["pool", "20"],
-        "answer_partial":  ["connection", "exhausted", "database"],
-    },
-    {
-        "incident_id": "INC-008",
-        "tier": 2,
-        "question_type": "diagnosis",
-        "question": "503 errors are spiking and scaling the app out did not resolve them. What is the actual bottleneck and what evidence points to it?",
-        "where_filter": None,
-        "retrieval_signals": ["db_pool_active_connections=20", "Slow query", "connection pool exhausted"],
+        "retrieval_signals": [
+            "db_pool_active_connections=20",
+            "connection pool exhausted",
+            "Slow query",
+        ],
         "answer_required": ["slow quer", "pool"],
-        "answer_partial":  ["database", "connection", "scaling"],
-    },
-    {
-        "incident_id": "INC-008",
-        "tier": 2,
-        "question_type": "remediation",
-        "question": "After identifying the cause of a connection pool exhaustion incident, what are the correct steps to fix it?",
-        "where_filter": None,
-        "retrieval_signals": ["slow query", "pool exhausted", "db_pool"],
-        "answer_required": ["index", "query"],
-        "answer_partial":  ["timeout", "pool size", "optimize"],
+        "answer_partial":  ["database", "connection", "index"],
     },
 
     {
         "incident_id": "INC-009",
         "tier": 2,
-        "question_type": "diagnosis",
-        "question": "Eight app instances crashed simultaneously on the same cell. What happened to that cell and what was the downstream effect?",
+        "app_id": "app-nwgzbp",
+        "org": "org-payments",
+        "question": (
+            "All 8 instances of app-nwgzbp in org-payments crashed simultaneously. "
+            "Diego rescheduled them but they are failing health checks again. "
+            "The cell metrics show cell-009 memory_available=0MB. "
+            "What happened and why are the rescheduled instances also unhealthy?"
+        ),
         "where_filter": None,
-        "retrieval_signals": ["cell-009", "cell OOM", "Rescheduling", "mass reschedule"],
+        "retrieval_signals": [
+            "cell-009",
+            "cell OOM",
+            "Rescheduling",
+            "cell overloaded",
+        ],
         "answer_required": ["cell", "memory", "reschedule"],
-        "answer_partial":  ["OOM", "instance", "killed"],
+        "answer_partial":  ["OOM", "pressure", "capacity"],
     },
 
     {
         "incident_id": "INC-010",
         "tier": 2,
-        "question_type": "diagnosis",
-        "question": "An app is getting ECONNREFUSED errors trying to call an internal service. What does the network layer log show?",
+        "app_id": "app-17shto",
+        "org": "org-payments",
+        "question": (
+            "order-service (app-17shto) in org-payments was redeployed to v2.4.1 "
+            "and is now logging 'ECONNREFUSED' for every call to inventory-svc. "
+            "Both apps are running. The network logs show 'Outbound policy DENY'. "
+            "What is the root cause and how is it fixed?"
+        ),
         "where_filter": None,
-        "retrieval_signals": ["DENY", "silk.daemon", "network-policy", "ECONNREFUSED"],
+        "retrieval_signals": [
+            "DENY",
+            "silk.daemon",
+            "network-policy",
+            "ECONNREFUSED",
+        ],
         "answer_required": ["network policy", "deny"],
-        "answer_partial":  ["policy", "blocked", "connection refused"],
-    },
-    {
-        "incident_id": "INC-010",
-        "tier": 2,
-        "question_type": "remediation",
-        "question": "Service-to-service HTTP calls are being refused despite both apps running. What is the fix?",
-        "where_filter": None,
-        "retrieval_signals": ["DENY", "policy", "ECONNREFUSED", "inventory-svc"],
-        "answer_required": ["network-policy", "allow"],
-        "answer_partial":  ["policy", "port", "cf add"],
+        "answer_partial":  ["policy", "blocked", "cf add-network-policy"],
     },
 
     {
         "incident_id": "INC-011",
         "tier": 2,
-        "question_type": "diagnosis",
-        "question": "A Python app builds successfully but crashes immediately on startup with an ImportError. What mismatch caused this?",
+        "app_id": "app-8ygxbn",
+        "org": "org-analytics",
+        "question": (
+            "app-8ygxbn (Python) in org-analytics builds without error but "
+            "crashes on startup with 'ImportError: cannot import name "
+            "typing_extensions from numpy'. requirements.txt pins numpy==1.24. "
+            "What is wrong?"
+        ),
         "where_filter": None,
-        "retrieval_signals": ["numpy", "1.21", "ImportError", "buildpack default"],
+        "retrieval_signals": [
+            "numpy",
+            "1.21",
+            "ImportError",
+            "buildpack default",
+        ],
         "answer_required": ["numpy", "version"],
-        "answer_partial":  ["import", "buildpack", "1.24"],
+        "answer_partial":  ["buildpack", "1.24", "1.21", "pin"],
     },
 
     {
         "incident_id": "INC-012",
         "tier": 2,
-        "question_type": "diagnosis",
-        "question": "Multiple deployments are failing in the staging pipeline with a 429 error from an external registry. What is happening?",
+        "app_id": "app-s0886r",
+        "org": "org-devops",
+        "question": (
+            "Multiple deployments for app-s0886r and other apps in org-devops "
+            "are failing during staging with '429 toomanyrequests' from "
+            "registry-1.docker.io. Deployments were fine this morning. "
+            "What is happening and what is the fix?"
+        ),
         "where_filter": None,
-        "retrieval_signals": ["toomanyrequests", "rate limit", "registry-1.docker.io", "429"],
+        "retrieval_signals": [
+            "toomanyrequests",
+            "rate limit",
+            "registry-1.docker.io",
+            "429",
+        ],
         "answer_required": ["rate limit", "docker"],
-        "answer_partial":  ["429", "registry", "pull"],
+        "answer_partial":  ["registry", "pull", "authenticated"],
     },
 
     {
         "incident_id": "INC-013",
         "tier": 2,
-        "question_type": "diagnosis",
-        "question": "A service binding operation is blocking deployment indefinitely. What timed out and what was the underlying cause?",
+        "app_id": "app-dj02vx",
+        "org": "org-platform",
+        "question": (
+            "Deploying app-dj02vx in org-platform is stuck: cf bind-service "
+            "for redis-cache has been running for over 30 seconds and the "
+            "deployment pipeline is blocked. The broker logs show Redis master "
+            "unreachable. What is causing the bind to time out?"
+        ),
         "where_filter": None,
-        "retrieval_signals": ["broker_timeout", "Bind timeout", "Redis", "master node unreachable"],
+        "retrieval_signals": [
+            "Bind timeout",
+            "broker_timeout",
+            "Redis",
+            "master node unreachable",
+        ],
         "answer_required": ["broker", "redis"],
-        "answer_partial":  ["timeout", "service", "bind"],
+        "answer_partial":  ["timeout", "service broker", "failover"],
     },
 
     {
         "incident_id": "INC-014",
         "tier": 2,
-        "question_type": "diagnosis",
-        "question": "Error rates spiked during a rolling deployment but the app was not crashing. What caused the mixed response behavior?",
+        "app_id": "app-eeyjwy",
+        "org": "org-payments",
+        "question": (
+            "app-eeyjwy in org-payments shows a spike of 422/500 errors during "
+            "a rolling deploy from v1 to v2. No instances are crashing. "
+            "The logs show 'missing field idempotency_key' and the autoscaler "
+            "fired during the deploy window. What is the root cause?"
+        ),
         "where_filter": None,
-        "retrieval_signals": ["mixed pool", "v1", "v2", "idempotency_key", "autoscaler"],
+        "retrieval_signals": [
+            "mixed pool",
+            "idempotency_key",
+            "v1",
+            "v2",
+        ],
         "answer_required": ["version", "mixed"],
-        "answer_partial":  ["autoscaler", "deploy", "schema"],
+        "answer_partial":  ["autoscaler", "schema", "incompatible"],
     },
 
     {
         "incident_id": "INC-015",
         "tier": 2,
-        "question_type": "diagnosis",
-        "question": "Metrics and logs appear to be missing for some apps. What platform component is responsible and what does it report?",
+        "app_id": "app-7c09jg",
+        "org": "org-platform",
+        "question": (
+            "Logs and metrics for app-7c09jg and several other apps in "
+            "org-platform appear to be missing or delayed. The doppler metrics "
+            "show buffer fill rates near 98%. What platform component is "
+            "failing and what is the impact?"
+        ),
         "where_filter": None,
-        "retrieval_signals": ["doppler", "dropped", "backpressure", "buffer"],
+        "retrieval_signals": [
+            "Doppler buffer",
+            "dropping envelopes",
+            "backpressure",
+            "messages dropped",
+        ],
         "answer_required": ["doppler", "drop"],
         "answer_partial":  ["loggregator", "buffer", "backpressure"],
     },
@@ -331,129 +409,180 @@ BENCHMARK_CASES = [
     {
         "incident_id": "INC-016",
         "tier": 2,
-        "question_type": "diagnosis",
-        "question": "The Diego scheduler stopped receiving cell heartbeats and the routing table went stale. What was the root cause?",
+        "app_id": "app-kch0ri",
+        "org": "org-platform",
+        "question": (
+            "Diego has stopped receiving cell heartbeats and the routing table "
+            "has gone stale, causing cell evacuations. The NATS metrics show "
+            "message rate=48000/s against a normal of 2000/s. "
+            "What is the root cause of the message bus saturation?"
+        ),
         "where_filter": None,
-        "retrieval_signals": ["NATS", "48000", "slow consumer", "runaway", "metrics-agent"],
-        "answer_required": ["nats", "message bus"],
-        "answer_partial":  ["saturated", "publisher", "rate"],
+        "retrieval_signals": [
+            "NATS",
+            "48000",
+            "slow consumer",
+            "metrics-agent",
+        ],
+        "answer_required": ["nats", "message"],
+        "answer_partial":  ["saturated", "runaway", "publisher"],
     },
 
     {
         "incident_id": "INC-017",
         "tier": 2,
-        "question_type": "diagnosis",
-        "question": "Health checks are timing out for apps on cell-012 but the apps themselves appear to be running. What does the metric data show?",
+        "app_id": "app-q16e4q",
+        "org": "org-analytics",
+        "question": (
+            "app-q16e4q and several co-located apps on cell-012 in org-analytics "
+            "are failing health checks even though they are running. The cell "
+            "CPU metric shows 94% sustained usage. What is causing the health "
+            "check timeouts?"
+        ),
         "where_filter": None,
-        "retrieval_signals": ["cell-012", "cpu_usage", "94%", "noisy neighbor"],
+        "retrieval_signals": [
+            "cell-012",
+            "cpu_usage",
+            "94%",
+            "noisy neighbor",
+        ],
         "answer_required": ["cpu", "cell-012"],
-        "answer_partial":  ["throttle", "neighbor", "health check"],
+        "answer_partial":  ["throttle", "noisy neighbor", "health check"],
     },
 
-    # ── TIER 3 ───────────────────────────────────────────────────────────────
+    # ── TIER 3 — Complex multi-factor / distributed failures ─────────────────
 
     {
         "incident_id": "INC-018",
         "tier": 3,
-        "question_type": "diagnosis",
-        "question": "After a blue-green deployment swap, 502 errors appeared for about 45 seconds then stopped. What caused the intermittent failures?",
+        "app_id": "app-7o9r07",
+        "org": "org-payments",
+        "question": (
+            "After a blue-green swap for app-7o9r07 in org-payments, users "
+            "saw 502 errors for about 45 seconds then traffic recovered on its "
+            "own. The router logs show requests hitting a 'deregistered blue "
+            "instance'. What caused the transient 502s and why did they "
+            "self-resolve?"
+        ),
         "where_filter": None,
-        "retrieval_signals": ["stale backend", "cache", "blue", "deregistered", "TTL"],
+        "retrieval_signals": [
+            "stale backend",
+            "deregistered",
+            "cache",
+            "TTL",
+        ],
         "answer_required": ["cache", "route"],
-        "answer_partial":  ["blue", "stale", "ttl", "expired"],
-    },
-    {
-        "incident_id": "INC-018",
-        "tier": 3,
-        "question_type": "retrieval_probe",
-        "question": "Find log entries showing requests being routed to a backend that was already deregistered.",
-        "where_filter": None,
-        "retrieval_signals": ["stale backend", "deregistered", "connection refused", "cache"],
-        "answer_required": ["stale", "deregistered"],
-        "answer_partial":  ["502", "cache", "blue"],
+        "answer_partial":  ["stale", "ttl", "blue", "expired"],
     },
 
     {
         "incident_id": "INC-019",
         "tier": 3,
-        "question_type": "diagnosis",
-        "question": "Two services were deployed together and both crashed at exactly the same time after 90 seconds. What startup pattern caused this?",
+        "app_id": "app-sudja3",
+        "org": "org-platform",
+        "question": (
+            "auth-service (app-sudja3) and gateway-service (app-stq12y) in "
+            "org-platform were deployed together. Both crashed after exactly "
+            "90 seconds with health_check_timeout. The logs show each service "
+            "polling the other's /health endpoint indefinitely. "
+            "What architectural pattern caused this deadlock?"
+        ),
         "where_filter": None,
-        "retrieval_signals": ["waiting for gateway", "waiting for auth", "poll", "circular"],
+        "retrieval_signals": [
+            "gateway not ready",
+            "auth not ready",
+            "circular",
+            "poll",
+        ],
         "answer_required": ["circular", "dependency"],
         "answer_partial":  ["deadlock", "waiting", "health"],
-    },
-    {
-        "incident_id": "INC-019",
-        "tier": 3,
-        "question_type": "remediation",
-        "question": "Two microservices that depend on each other's health endpoints both fail to start. How should this be resolved architecturally?",
-        "where_filter": None,
-        "retrieval_signals": ["waiting for", "poll", "health check timed out"],
-        "answer_required": ["circuit breaker", "startup"],
-        "answer_partial":  ["lazy", "dependency", "readiness"],
     },
 
     {
         "incident_id": "INC-020",
         "tier": 3,
-        "question_type": "diagnosis",
-        "question": "The autoscaler is repeatedly scaling up and then immediately scaling back down in a regular cycle. What configuration mismatch causes this?",
+        "app_id": "app-ec0i16",
+        "org": "org-payments",
+        "question": (
+            "The autoscaler for app-ec0i16 in org-payments is oscillating: "
+            "it scales up every ~30 seconds then scales back down before the "
+            "new instances are healthy. CPU rebounds to >65% in each cycle. "
+            "What configuration mismatch is causing autoscaler thrashing?"
+        ),
         "where_filter": None,
-        "retrieval_signals": ["cooldown", "Scale up", "Scale down", "oscillat", "startup"],
+        "retrieval_signals": [
+            "cooldown",
+            "Scale up",
+            "Scale down",
+            "rebounded",
+        ],
         "answer_required": ["cooldown", "startup"],
-        "answer_partial":  ["oscillat", "thrash", "scale"],
+        "answer_partial":  ["oscillat", "thrash", "60s"],
     },
 
     {
         "incident_id": "INC-021",
         "tier": 3,
-        "question_type": "diagnosis",
-        "question": "New deployments are failing and the scheduler is refusing to place instances, but running apps are unaffected. What platform component has failed?",
+        "app_id": "app-fexcru",
+        "org": "org-platform",
+        "question": (
+            "cf push for app-fexcru and all other apps in org-platform is "
+            "being rejected with 'scheduler unavailable'. Running apps are "
+            "unaffected. The BBS logs show 'BBS is not the active master'. "
+            "What distributed system failure is blocking new deployments?"
+        ),
         "where_filter": {"level": "ERROR"},
-        "retrieval_signals": ["quorum", "Locket", "BBS", "not the active master"],
+        "retrieval_signals": [
+            "quorum lost",
+            "Locket",
+            "BBS is not the active master",
+            "scheduling suspended",
+        ],
         "answer_required": ["quorum", "bbs"],
         "answer_partial":  ["locket", "scheduler", "partition"],
     },
-    {
-        "incident_id": "INC-021",
-        "tier": 3,
-        "question_type": "retrieval_probe",
-        "question": "Find log evidence of a distributed consensus failure preventing new instance scheduling.",
-        "where_filter": None,
-        "retrieval_signals": ["quorum lost", "Locket", "BBS is not the active master", "scheduling suspended"],
-        "answer_required": ["quorum", "locket"],
-        "answer_partial":  ["bbs", "scheduling", "master"],
-    },
 
     {
         "incident_id": "INC-022",
         "tier": 3,
-        "question_type": "diagnosis",
-        "question": "An app became completely unresponsive despite no code changes. What external dependency degraded and how did it cascade to a full outage?",
+        "app_id": "app-0nl9y6",
+        "org": "org-payments",
+        "question": (
+            "app-0nl9y6 (payments-api) in org-payments became completely "
+            "unresponsive with no code changes. Logs show OAuth validate "
+            "latency climbed from 80ms to 3800ms, then "
+            "'RejectedExecutionException: no threads available'. "
+            "What external dependency caused the full outage?"
+        ),
         "where_filter": None,
-        "retrieval_signals": ["OAuth", "thread pool", "3800ms", "RejectedExecutionException"],
+        "retrieval_signals": [
+            "OAuth",
+            "thread pool",
+            "3800ms",
+            "RejectedExecutionException",
+        ],
         "answer_required": ["oauth", "thread pool"],
         "answer_partial":  ["latency", "exhausted", "cascade"],
-    },
-    {
-        "incident_id": "INC-022",
-        "tier": 3,
-        "question_type": "remediation",
-        "question": "How should an app be protected against an external authentication provider becoming slow or unresponsive?",
-        "where_filter": None,
-        "retrieval_signals": ["OAuth", "thread pool", "latency", "circuit"],
-        "answer_required": ["circuit breaker", "timeout"],
-        "answer_partial":  ["bulkhead", "async", "fallback"],
     },
 
     {
         "incident_id": "INC-023",
         "tier": 3,
-        "question_type": "diagnosis",
-        "question": "A deployment worked previously but now consistently fails with a checksum mismatch error. The build itself succeeds. What is wrong?",
+        "app_id": "app-8fxpjz",
+        "org": "org-devops",
+        "question": (
+            "app-8fxpjz in org-devops built successfully but every deploy "
+            "attempt fails with 'Checksum mismatch: expected sha256=a1b2c3 "
+            "got d4e5f6'. The blob store logs show 'Blob key conflict: "
+            "partial blob exists'. Previous deploys worked. What is wrong?"
+        ),
         "where_filter": None,
-        "retrieval_signals": ["checksum mismatch", "partial blob", "Blob key conflict", "67%"],
+        "retrieval_signals": [
+            "Checksum mismatch",
+            "partial blob",
+            "Blob key conflict",
+            "Upload interrupted",
+        ],
         "answer_required": ["partial", "blob"],
         "answer_partial":  ["checksum", "upload", "interrupted"],
     },
@@ -461,45 +590,47 @@ BENCHMARK_CASES = [
     {
         "incident_id": "INC-024",
         "tier": 3,
-        "question_type": "diagnosis",
-        "question": "A rolling deployment has been paused for several minutes. The canary instance passes its liveness check but the deploy won't proceed. Why?",
+        "app_id": "app-oghb8v",
+        "org": "org-payments",
+        "question": (
+            "A rolling deploy for app-oghb8v v3.1 in org-payments has been "
+            "paused for 5 minutes. The canary instance passes its liveness "
+            "check (HTTP 200) but the readiness endpoint at /readiness returns "
+            "503 with 'cache not warmed'. Why is the deploy blocked and what "
+            "is the fix?"
+        ),
         "where_filter": None,
-        "retrieval_signals": ["readiness", "503", "cache not warmed", "liveness"],
+        "retrieval_signals": [
+            "readiness",
+            "503",
+            "cache not warmed",
+            "liveness",
+        ],
         "answer_required": ["readiness", "503"],
         "answer_partial":  ["canary", "cache", "warmed"],
     },
 
-    # ── PRECEDING FAILURE DETECTION (Tier 3 — special class) ─────────────────
-
     {
         "incident_id": "INC-025",
         "tier": 3,
-        "question_type": "retrieval_probe",
-        "question": "Are there any certificate expiration warnings in the logs before a TLS failure occurs?",
+        "app_id": "app-hk5m1k",
+        "org": "org-platform",
+        "question": (
+            "All inter-service communication in org-platform failed "
+            "simultaneously with 'TLS handshake error: certificate has expired'. "
+            "The logs show a CERT WARNING was emitted 6 hours earlier. "
+            "Why was the outage not prevented and how should this be detected "
+            "automatically in future?"
+        ),
         "where_filter": None,
-        "retrieval_signals": ["CERT WARNING", "expires in", "mTLS", "6h"],
-        "answer_required": ["cert", "warn"],
-        "answer_partial":  ["expire", "tls", "certificate"],
-    },
-    {
-        "incident_id": "INC-025",
-        "tier": 3,
-        "question_type": "diagnosis",
-        "question": "All inter-service communication failed simultaneously with TLS errors. What warning appeared in the logs hours before the outage?",
-        "where_filter": None,
-        "retrieval_signals": ["CERT WARNING", "expires in 6h", "certificate has expired", "mTLS"],
+        "retrieval_signals": [
+            "CERT WARNING",
+            "expires in",
+            "mTLS",
+            "certificate has expired",
+        ],
         "answer_required": ["certificate", "warn"],
-        "answer_partial":  ["expire", "6 hour", "6h"],
-    },
-    {
-        "incident_id": "INC-025",
-        "tier": 3,
-        "question_type": "remediation",
-        "question": "A platform-wide TLS failure took down all inter-service communication. How should this class of incident be prevented?",
-        "where_filter": None,
-        "retrieval_signals": ["certificate has expired", "CERT WARNING", "mTLS"],
-        "answer_required": ["automat", "alert"],
-        "answer_partial":  ["renew", "rotation", "monitor"],
+        "answer_partial":  ["expire", "alert", "monitor", "automat"],
     },
 ]
 
@@ -510,11 +641,11 @@ BENCHMARK_CASES = [
 
 def score_retrieval(chunks: list[dict], signals: list[str]) -> dict:
     """
-    Check whether any retrieved chunk contains at least one signal phrase.
-    Returns hit/miss per signal and an overall pass/fail.
+    Check whether any retrieved chunk text contains at least one signal phrase.
+    Returns per-signal hit/miss and an overall pass/fail.
     """
-    combined_text = " ".join(c["text"] for c in chunks).lower()
-    hits = {s: s.lower() in combined_text for s in signals}
+    combined = " ".join(c["text"] for c in chunks).lower()
+    hits = {s: s.lower() in combined for s in signals}
     passed = any(hits.values())
     return {
         "passed": passed,
@@ -526,14 +657,14 @@ def score_retrieval(chunks: list[dict], signals: list[str]) -> dict:
 
 def score_answer(answer: str, required: list[str], partial: list[str]) -> dict:
     """
-    Grade the LLM answer:
+    Grade LLM answer:
       full_credit  — all required keywords present
-      partial      — required fails but at least one partial keyword present
+      partial      — required fails but ≥1 partial keyword present
       miss         — nothing matches
     """
-    answer_lower = answer.lower()
-    req_hits = {k: k.lower() in answer_lower for k in required}
-    par_hits = {k: k.lower() in answer_lower for k in partial}
+    a = answer.lower()
+    req_hits = {k: k.lower() in a for k in required}
+    par_hits = {k: k.lower() in a for k in partial}
 
     if all(req_hits.values()):
         grade = "full_credit"
@@ -553,7 +684,7 @@ def score_answer(answer: str, required: list[str], partial: list[str]) -> dict:
 # RUNNER
 # ============================================================================
 
-def run_benchmark(collection_name: str) -> dict:
+def run_benchmark(collection_name: str) -> list[dict]:
     collection = get_collection(collection_name)
     if collection.count() == 0:
         sys.exit(f"Collection '{collection_name}' is empty.")
@@ -566,44 +697,57 @@ def run_benchmark(collection_name: str) -> dict:
 
     for i, case in enumerate(BENCHMARK_CASES, 1):
         inc_id = case["incident_id"]
-        qtype  = case["question_type"]
         tier   = case["tier"]
 
-        print(f"[{i:02d}/{total}] {inc_id} T{tier} {qtype:<20} ", end="", flush=True)
-        t_start = time.time()
+        print(f"[{i:02d}/{total}] {inc_id} T{tier}  ", end="", flush=True)
+        t0 = time.time()
 
-        # ── Retrieval ─────────────────────────────────────────────────────
+        # ── Retrieval ────────────────────────────────────────────────────
         chunks = retrieve_chunks(
             case["question"], collection,
-            EMBEDDING_MODEL, N_RESULTS, case.get("where_filter")
+            EMBEDDING_MODEL, N_RESULTS, case.get("where_filter"),
         )
         retrieval_score = score_retrieval(chunks, case["retrieval_signals"])
 
-        # ── Generation ────────────────────────────────────────────────────
+        # ── Generation ───────────────────────────────────────────────────
         prompt = build_prompt(case["question"], chunks)
         answer = generate_answer(prompt, LLM_MODEL)
-        answer_score = score_answer(answer, case["answer_required"], case["answer_partial"])
+        answer_score = score_answer(
+            answer, case["answer_required"], case["answer_partial"]
+        )
 
-        elapsed = time.time() - t_start
-
-        r_flag = "✓" if retrieval_score["passed"]           else "✗"
-        a_flag = {"full_credit": "✓", "partial": "~", "miss": "✗"}[answer_score["grade"]]
+        elapsed = time.time() - t0
+        r_flag  = "✓" if retrieval_score["passed"] else "✗"
+        a_flag  = {"full_credit": "✓", "partial": "~", "miss": "✗"}[answer_score["grade"]]
         print(f"ret:{r_flag}  ans:{a_flag}  ({elapsed:.1f}s)")
 
         if VERBOSE:
-            print(f"  Q: {case['question'][:80]}")
-            print(f"  A: {answer[:120]}")
+            print(f"  Q: {case['question'][:90]}")
+            print(f"  A: {answer[:140]}")
 
         results.append({
-            "incident_id":    inc_id,
-            "tier":           tier,
-            "question_type":  qtype,
-            "question":       case["question"],
-            "where_filter":   case.get("where_filter"),
-            "answer":         answer,
-            "retrieval":      retrieval_score,
-            "answer_score":   answer_score,
-            "elapsed_s":      round(elapsed, 2),
+            "incident_id":   inc_id,
+            "tier":          tier,
+            "app_id":        case["app_id"],
+            "org":           case["org"],
+            "question":      case["question"],
+            "where_filter":  case.get("where_filter"),
+            "answer":        answer,
+            "retrieval":     retrieval_score,
+            "answer_score":  answer_score,
+            "elapsed_s":     round(elapsed, 2),
+            # Full context passed to the LLM — each chunk as retrieved from
+            # ChromaDB, ordered by ascending distance (closest first).
+            # Useful for manually grading retrieval quality beyond signal matching.
+            "retrieved_chunks": [
+                {
+                    "rank":       rank,
+                    "distance":   c.get("distance"),
+                    "text":       c["text"],
+                    "metadata":   c["metadata"],
+                }
+                for rank, c in enumerate(chunks, 1)
+            ],
             "config": {
                 "collection":      collection_name,
                 "embedding_model": EMBEDDING_MODEL,
@@ -621,59 +765,55 @@ def run_benchmark(collection_name: str) -> dict:
 # ============================================================================
 
 def print_summary(results: list[dict]):
-    total = len(results)
-
+    total     = len(results)
     ret_pass  = sum(1 for r in results if r["retrieval"]["passed"])
     full      = sum(1 for r in results if r["answer_score"]["grade"] == "full_credit")
     partial   = sum(1 for r in results if r["answer_score"]["grade"] == "partial")
     miss      = sum(1 for r in results if r["answer_score"]["grade"] == "miss")
 
-    print("\n" + "═" * 60)
+    pct = lambda n: f"{100 * n // total}%"
+
+    print("\n" + "═" * 62)
     print("  BENCHMARK SUMMARY")
-    print("═" * 60)
-    print(f"  Total cases        : {total}")
-    print(f"  Retrieval pass     : {ret_pass}/{total}  ({100*ret_pass//total}%)")
-    print(f"  Answer full credit : {full}/{total}  ({100*full//total}%)")
-    print(f"  Answer partial     : {partial}/{total}  ({100*partial//total}%)")
-    print(f"  Answer miss        : {miss}/{total}  ({100*miss//total}%)")
+    print("═" * 62)
+    print(f"  Total incidents    : {total}")
+    print(f"  Retrieval pass     : {ret_pass}/{total}  ({pct(ret_pass)})")
+    print(f"  Answer full credit : {full}/{total}  ({pct(full)})")
+    print(f"  Answer partial     : {partial}/{total}  ({pct(partial)})")
+    print(f"  Answer miss        : {miss}/{total}  ({pct(miss)})")
 
     # ── By tier ──────────────────────────────────────────────────────────
-    print("\n  ── By tier ─────────────────────────")
+    print("\n  ── By tier ─────────────────────────────────────────")
     for tier in (1, 2, 3):
         t_rows = [r for r in results if r["tier"] == tier]
+        if not t_rows:
+            continue
         t_ret  = sum(1 for r in t_rows if r["retrieval"]["passed"])
         t_full = sum(1 for r in t_rows if r["answer_score"]["grade"] == "full_credit")
-        print(f"  Tier {tier} ({len(t_rows):2} cases)  "
-              f"ret:{t_ret}/{len(t_rows)}  full:{t_full}/{len(t_rows)}")
+        t_par  = sum(1 for r in t_rows if r["answer_score"]["grade"] == "partial")
+        print(f"  Tier {tier}  ({len(t_rows)} cases)   "
+              f"ret:{t_ret}/{len(t_rows)}   "
+              f"full:{t_full}/{len(t_rows)}   "
+              f"partial:{t_par}/{len(t_rows)}")
 
-    # ── By question type ─────────────────────────────────────────────────
-    print("\n  ── By question type ────────────────")
-    for qtype in ("retrieval_probe", "diagnosis", "remediation"):
-        q_rows = [r for r in results if r["question_type"] == qtype]
-        q_ret  = sum(1 for r in q_rows if r["retrieval"]["passed"])
-        q_full = sum(1 for r in q_rows if r["answer_score"]["grade"] == "full_credit")
-        print(f"  {qtype:<20}  "
-              f"ret:{q_ret}/{len(q_rows)}  full:{q_full}/{len(q_rows)}")
-
-    # ── Misses worth investigating ────────────────────────────────────────
+    # ── Answer misses ─────────────────────────────────────────────────────
     misses = [r for r in results if r["answer_score"]["grade"] == "miss"]
     if misses:
-        print("\n  ── Answer misses ───────────────────")
+        print("\n  ── Answer misses (worth investigating) ──────────────")
         for r in misses:
-            print(f"  {r['incident_id']} T{r['tier']} {r['question_type']}")
-            print(f"    Q: {r['question'][:70]}")
+            print(f"  {r['incident_id']} T{r['tier']}  app={r['app_id']}")
             print(f"    required: {list(r['answer_score']['required_hits'].keys())}")
 
+    # ── Retrieval failures ────────────────────────────────────────────────
     ret_fails = [r for r in results if not r["retrieval"]["passed"]]
     if ret_fails:
-        print("\n  ── Retrieval failures ──────────────")
+        print("\n  ── Retrieval failures ───────────────────────────────")
         for r in ret_fails:
-            print(f"  {r['incident_id']} T{r['tier']} {r['question_type']}")
-            hits = r["retrieval"]["signal_hits"]
-            missed = [s for s, hit in hits.items() if not hit]
+            missed = [s for s, hit in r["retrieval"]["signal_hits"].items() if not hit]
+            print(f"  {r['incident_id']} T{r['tier']}  app={r['app_id']}")
             print(f"    missed signals: {missed}")
 
-    print("═" * 60)
+    print("═" * 62)
 
 
 # ============================================================================
@@ -688,7 +828,6 @@ if __name__ == "__main__":
 
     results = run_benchmark(collection_name)
 
-    # Add run metadata
     output = {
         "run_timestamp": datetime.utcnow().isoformat() + "Z",
         "config": {
