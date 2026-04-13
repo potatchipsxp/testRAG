@@ -1,0 +1,672 @@
+{
+  "evaluated_at": "2026-04-10T21:14:21.500598Z",
+  "n_incidents": 25,
+  "summary": {
+    "answer": {
+      "full_credit": 1,
+      "partial": 3,
+      "miss": 21,
+      "error": 0
+    },
+    "retrieval": {
+      "avg_recall": 0.0,
+      "avg_precision": 0
+    },
+    "trace": {
+      "avg_score": 0.0,
+      "max_score": 5
+    }
+  },
+  "cases": [
+    {
+      "incident_id": "INC-001",
+      "tier": 1,
+      "status": "ok",
+      "answer_grade": "miss",
+      "retrieval": {
+        "num_calls": 0,
+        "calls": [],
+        "precision": null,
+        "recall": 0.0,
+        "note": "no query_docs calls made"
+      },
+      "trace": {
+        "called_logs": false,
+        "called_docs": false,
+        "logs_before_docs": false,
+        "no_doc_only": false,
+        "appropriate_depth": false,
+        "n_log_calls": 0,
+        "n_doc_calls": 0,
+        "total_calls": 0,
+        "trace_score": 0,
+        "trace_score_max": 5
+      },
+      "diagnosis_excerpt": "{\"name\": \"query_logs\", \"arguments\": {\"question\": \"What ERROR-level events appear in the APP component for app-q0k5oz?\"}}"
+    },
+    {
+      "incident_id": "INC-002",
+      "tier": 1,
+      "status": "ok",
+      "answer_grade": "miss",
+      "retrieval": {
+        "num_calls": 0,
+        "calls": [],
+        "precision": null,
+        "recall": 0.0,
+        "note": "no query_docs calls made"
+      },
+      "trace": {
+        "called_logs": false,
+        "called_docs": false,
+        "logs_before_docs": false,
+        "no_doc_only": false,
+        "appropriate_depth": false,
+        "n_log_calls": 0,
+        "n_doc_calls": 0,
+        "total_calls": 0,
+        "trace_score": 0,
+        "trace_score_max": 5
+      },
+      "diagnosis_excerpt": "{\"name\": \"query_logs\", \"arguments\": {\"question\": \"What files or directories are taking up space on the filesystem of app-ocmoe0 in org-analytics?\"}}"
+    },
+    {
+      "incident_id": "INC-003",
+      "tier": 1,
+      "status": "ok",
+      "answer_grade": "miss",
+      "retrieval": {
+        "num_calls": 0,
+        "calls": [],
+        "precision": null,
+        "recall": 0.0,
+        "note": "no query_docs calls made"
+      },
+      "trace": {
+        "called_logs": false,
+        "called_docs": false,
+        "logs_before_docs": false,
+        "no_doc_only": false,
+        "appropriate_depth": false,
+        "n_log_calls": 0,
+        "n_doc_calls": 0,
+        "total_calls": 0,
+        "trace_score": 0,
+        "trace_score_max": 5
+      },
+      "diagnosis_excerpt": "{\"name\": \"query_logs\", \"arguments\": {\"question\": \"What ERROR-level events appear in the APP component for app-ia54l8?\"}}"
+    },
+    {
+      "incident_id": "INC-004",
+      "tier": 1,
+      "status": "ok",
+      "answer_grade": "miss",
+      "retrieval": {
+        "num_calls": 0,
+        "calls": [],
+        "precision": null,
+        "recall": 0.0,
+        "note": "no query_docs calls made"
+      },
+      "trace": {
+        "called_logs": false,
+        "called_docs": false,
+        "logs_before_docs": false,
+        "no_doc_only": false,
+        "appropriate_depth": false,
+        "n_log_calls": 0,
+        "n_doc_calls": 0,
+        "total_calls": 0,
+        "trace_score": 0,
+        "trace_score_max": 5
+      },
+      "diagnosis_excerpt": "{\"name\": \"query_logs\", \"arguments\": {\"question\": \"What ERROR-level events appear in the APP component for app-z5lhyd?\"}}"
+    },
+    {
+      "incident_id": "INC-005",
+      "tier": 1,
+      "status": "ok",
+      "answer_grade": "miss",
+      "retrieval": {
+        "num_calls": 0,
+        "calls": [],
+        "precision": null,
+        "recall": 0.0,
+        "note": "no query_docs calls made"
+      },
+      "trace": {
+        "called_logs": false,
+        "called_docs": false,
+        "logs_before_docs": false,
+        "no_doc_only": false,
+        "appropriate_depth": false,
+        "n_log_calls": 0,
+        "n_doc_calls": 0,
+        "total_calls": 0,
+        "trace_score": 0,
+        "trace_score_max": 5
+      },
+      "diagnosis_excerpt": "{\"name\": \"query_logs\", \"arguments\": {\"question\": \"What ERROR-level events appear in the APP component for app-p8hcke at midnight?\"}}"
+    },
+    {
+      "incident_id": "INC-006",
+      "tier": 1,
+      "status": "ok",
+      "answer_grade": "partial",
+      "retrieval": {
+        "num_calls": 0,
+        "calls": [],
+        "precision": null,
+        "recall": 0.0,
+        "note": "no query_docs calls made"
+      },
+      "trace": {
+        "called_logs": false,
+        "called_docs": false,
+        "logs_before_docs": false,
+        "no_doc_only": false,
+        "appropriate_depth": false,
+        "n_log_calls": 0,
+        "n_doc_calls": 0,
+        "total_calls": 0,
+        "trace_score": 0,
+        "trace_score_max": 5
+      },
+      "diagnosis_excerpt": "{\"name\": \"query_logs\", \"arguments\": {\"question\": \"What ERROR-level events appear in the BUILDPACK component related to the sha512 integrity check failed for express@4.18.2?\"}}"
+    },
+    {
+      "incident_id": "INC-007",
+      "tier": 1,
+      "status": "ok",
+      "answer_grade": "miss",
+      "retrieval": {
+        "num_calls": 0,
+        "calls": [],
+        "precision": null,
+        "recall": 0.0,
+        "note": "no query_docs calls made"
+      },
+      "trace": {
+        "called_logs": false,
+        "called_docs": false,
+        "logs_before_docs": false,
+        "no_doc_only": false,
+        "appropriate_depth": false,
+        "n_log_calls": 0,
+        "n_doc_calls": 0,
+        "total_calls": 0,
+        "trace_score": 0,
+        "trace_score_max": 5
+      },
+      "diagnosis_excerpt": "{\"name\": \"query_logs\", \"arguments\": {\"question\": \"What ERROR-level events appear in the ROUTER component?\"}}"
+    },
+    {
+      "incident_id": "INC-008",
+      "tier": 2,
+      "status": "ok",
+      "answer_grade": "partial",
+      "retrieval": {
+        "num_calls": 0,
+        "calls": [],
+        "precision": null,
+        "recall": 0.0,
+        "note": "no query_docs calls made"
+      },
+      "trace": {
+        "called_logs": false,
+        "called_docs": false,
+        "logs_before_docs": false,
+        "no_doc_only": false,
+        "appropriate_depth": false,
+        "n_log_calls": 0,
+        "n_doc_calls": 0,
+        "total_calls": 0,
+        "trace_score": 0,
+        "trace_score_max": 5
+      },
+      "diagnosis_excerpt": "{\"name\": \"query_logs\", \"arguments\": {\"question\": \"What ERROR-level events appear in the DATABASE component?\"}}"
+    },
+    {
+      "incident_id": "INC-009",
+      "tier": 2,
+      "status": "ok",
+      "answer_grade": "miss",
+      "retrieval": {
+        "num_calls": 0,
+        "calls": [],
+        "precision": null,
+        "recall": 0.0,
+        "note": "no query_docs calls made"
+      },
+      "trace": {
+        "called_logs": false,
+        "called_docs": false,
+        "logs_before_docs": false,
+        "no_doc_only": false,
+        "appropriate_depth": false,
+        "n_log_calls": 0,
+        "n_doc_calls": 0,
+        "total_calls": 0,
+        "trace_score": 0,
+        "trace_score_max": 5
+      },
+      "diagnosis_excerpt": "{\"name\": \"query_logs\", \"arguments\": {\"question\": \"What ERROR-level events appear in the Diego component?\"}}"
+    },
+    {
+      "incident_id": "INC-010",
+      "tier": 2,
+      "status": "ok",
+      "answer_grade": "miss",
+      "retrieval": {
+        "num_calls": 0,
+        "calls": [],
+        "precision": null,
+        "recall": 0.0,
+        "note": "no query_docs calls made"
+      },
+      "trace": {
+        "called_logs": false,
+        "called_docs": false,
+        "logs_before_docs": false,
+        "no_doc_only": false,
+        "appropriate_depth": false,
+        "n_log_calls": 0,
+        "n_doc_calls": 0,
+        "total_calls": 0,
+        "trace_score": 0,
+        "trace_score_max": 5
+      },
+      "diagnosis_excerpt": "{\"name\": \"query_logs\", \"arguments\": {\"question\": \"What ERROR-level events appear in the order-service component?\"}}"
+    },
+    {
+      "incident_id": "INC-011",
+      "tier": 2,
+      "status": "ok",
+      "answer_grade": "miss",
+      "retrieval": {
+        "num_calls": 0,
+        "calls": [],
+        "precision": null,
+        "recall": 0.0,
+        "note": "no query_docs calls made"
+      },
+      "trace": {
+        "called_logs": false,
+        "called_docs": false,
+        "logs_before_docs": false,
+        "no_doc_only": false,
+        "appropriate_depth": false,
+        "n_log_calls": 0,
+        "n_doc_calls": 0,
+        "total_calls": 0,
+        "trace_score": 0,
+        "trace_score_max": 5
+      },
+      "diagnosis_excerpt": "{\"name\": \"query_logs\", \"arguments\": {\"question\": \"What ERROR-level events appear in the APP-8YGXBN component?\"}}"
+    },
+    {
+      "incident_id": "INC-012",
+      "tier": 2,
+      "status": "ok",
+      "answer_grade": "partial",
+      "retrieval": {
+        "num_calls": 0,
+        "calls": [],
+        "precision": null,
+        "recall": 0.0,
+        "note": "no query_docs calls made"
+      },
+      "trace": {
+        "called_logs": false,
+        "called_docs": false,
+        "logs_before_docs": false,
+        "no_doc_only": false,
+        "appropriate_depth": false,
+        "n_log_calls": 0,
+        "n_doc_calls": 0,
+        "total_calls": 0,
+        "trace_score": 0,
+        "trace_score_max": 5
+      },
+      "diagnosis_excerpt": "{\"name\": \"query_logs\", \"arguments\": {\"question\": \"What ERROR-level events appear in the REGISTRY component?\"}}"
+    },
+    {
+      "incident_id": "INC-013",
+      "tier": 2,
+      "status": "ok",
+      "answer_grade": "miss",
+      "retrieval": {
+        "num_calls": 0,
+        "calls": [],
+        "precision": null,
+        "recall": 0.0,
+        "note": "no query_docs calls made"
+      },
+      "trace": {
+        "called_logs": false,
+        "called_docs": false,
+        "logs_before_docs": false,
+        "no_doc_only": false,
+        "appropriate_depth": false,
+        "n_log_calls": 0,
+        "n_doc_calls": 0,
+        "total_calls": 0,
+        "trace_score": 0,
+        "trace_score_max": 5
+      },
+      "diagnosis_excerpt": "{\"name\": \"query_logs\", \"arguments\": {\"question\": \"What ERROR-level events appear in the BROKER component?\"}}"
+    },
+    {
+      "incident_id": "INC-014",
+      "tier": 2,
+      "status": "ok",
+      "answer_grade": "miss",
+      "retrieval": {
+        "num_calls": 0,
+        "calls": [],
+        "precision": null,
+        "recall": 0.0,
+        "note": "no query_docs calls made"
+      },
+      "trace": {
+        "called_logs": false,
+        "called_docs": false,
+        "logs_before_docs": false,
+        "no_doc_only": false,
+        "appropriate_depth": false,
+        "n_log_calls": 0,
+        "n_doc_calls": 0,
+        "total_calls": 0,
+        "trace_score": 0,
+        "trace_score_max": 5
+      },
+      "diagnosis_excerpt": "{\"name\": \"query_logs\", \"arguments\": {\"question\": \"What ERROR-level events appear in the APP component for app-eeyjwy during the rolling deploy from v1 to v2?\"}}"
+    },
+    {
+      "incident_id": "INC-015",
+      "tier": 2,
+      "status": "ok",
+      "answer_grade": "miss",
+      "retrieval": {
+        "num_calls": 0,
+        "calls": [],
+        "precision": null,
+        "recall": 0.0,
+        "note": "no query_docs calls made"
+      },
+      "trace": {
+        "called_logs": false,
+        "called_docs": false,
+        "logs_before_docs": false,
+        "no_doc_only": false,
+        "appropriate_depth": false,
+        "n_log_calls": 0,
+        "n_doc_calls": 0,
+        "total_calls": 0,
+        "trace_score": 0,
+        "trace_score_max": 5
+      },
+      "diagnosis_excerpt": "{\"name\": \"query_logs\", \"arguments\": {\"question\": \"What ERROR-level events appear in the ROUTER component?\"}}"
+    },
+    {
+      "incident_id": "INC-016",
+      "tier": 2,
+      "status": "ok",
+      "answer_grade": "full_credit",
+      "retrieval": {
+        "num_calls": 0,
+        "calls": [],
+        "precision": null,
+        "recall": 0.0,
+        "note": "no query_docs calls made"
+      },
+      "trace": {
+        "called_logs": false,
+        "called_docs": false,
+        "logs_before_docs": false,
+        "no_doc_only": false,
+        "appropriate_depth": false,
+        "n_log_calls": 0,
+        "n_doc_calls": 0,
+        "total_calls": 0,
+        "trace_score": 0,
+        "trace_score_max": 5
+      },
+      "diagnosis_excerpt": "{\"name\": \"query_logs\", \"arguments\": {\"question\": \"What are the error messages and sequence of events in the MESSAGE_BUS component around the time of the NATS metrics spike?\"}}"
+    },
+    {
+      "incident_id": "INC-017",
+      "tier": 2,
+      "status": "ok",
+      "answer_grade": "miss",
+      "retrieval": {
+        "num_calls": 0,
+        "calls": [],
+        "precision": null,
+        "recall": 0.0,
+        "note": "no query_docs calls made"
+      },
+      "trace": {
+        "called_logs": false,
+        "called_docs": false,
+        "logs_before_docs": false,
+        "no_doc_only": false,
+        "appropriate_depth": false,
+        "n_log_calls": 0,
+        "n_doc_calls": 0,
+        "total_calls": 0,
+        "trace_score": 0,
+        "trace_score_max": 5
+      },
+      "diagnosis_excerpt": "{\"name\": \"query_logs\", \"arguments\": {\"question\": \"What ERROR-level events appear in the ROUTER component for app-q16e4q and co-located apps on cell-012 in org-analytics?\"}}"
+    },
+    {
+      "incident_id": "INC-018",
+      "tier": 3,
+      "status": "ok",
+      "answer_grade": "miss",
+      "retrieval": {
+        "num_calls": 0,
+        "calls": [],
+        "precision": null,
+        "recall": 0.0,
+        "note": "no query_docs calls made"
+      },
+      "trace": {
+        "called_logs": false,
+        "called_docs": false,
+        "logs_before_docs": false,
+        "no_doc_only": false,
+        "appropriate_depth": false,
+        "n_log_calls": 0,
+        "n_doc_calls": 0,
+        "total_calls": 0,
+        "trace_score": 0,
+        "trace_score_max": 5
+      },
+      "diagnosis_excerpt": "{\"name\": \"query_logs\", \"arguments\": {\"question\": \"What ERROR-level events appear in the ROUTER component during the time of the incident?\"}}"
+    },
+    {
+      "incident_id": "INC-019",
+      "tier": 3,
+      "status": "ok",
+      "answer_grade": "miss",
+      "retrieval": {
+        "num_calls": 0,
+        "calls": [],
+        "precision": null,
+        "recall": 0.0,
+        "note": "no query_docs calls made"
+      },
+      "trace": {
+        "called_logs": false,
+        "called_docs": false,
+        "logs_before_docs": false,
+        "no_doc_only": false,
+        "appropriate_depth": false,
+        "n_log_calls": 0,
+        "n_doc_calls": 0,
+        "total_calls": 0,
+        "trace_score": 0,
+        "trace_score_max": 5
+      },
+      "diagnosis_excerpt": "{\"name\": \"query_logs\", \"arguments\": {\"question\": \"What is the sequence of events for the auth-service and gateway-service components?\"}}"
+    },
+    {
+      "incident_id": "INC-020",
+      "tier": 3,
+      "status": "ok",
+      "answer_grade": "miss",
+      "retrieval": {
+        "num_calls": 0,
+        "calls": [],
+        "precision": null,
+        "recall": 0.0,
+        "note": "no query_docs calls made"
+      },
+      "trace": {
+        "called_logs": false,
+        "called_docs": false,
+        "logs_before_docs": false,
+        "no_doc_only": false,
+        "appropriate_depth": false,
+        "n_log_calls": 0,
+        "n_doc_calls": 0,
+        "total_calls": 0,
+        "trace_score": 0,
+        "trace_score_max": 5
+      },
+      "diagnosis_excerpt": "{\"name\": \"query_logs\", \"arguments\": {\"question\": \"What ERROR-level events appear in the AUTOSCALER component for app-ec0i16 in org-payments?\"}}"
+    },
+    {
+      "incident_id": "INC-021",
+      "tier": 3,
+      "status": "ok",
+      "answer_grade": "miss",
+      "retrieval": {
+        "num_calls": 0,
+        "calls": [],
+        "precision": null,
+        "recall": 0.0,
+        "note": "no query_docs calls made"
+      },
+      "trace": {
+        "called_logs": false,
+        "called_docs": false,
+        "logs_before_docs": false,
+        "no_doc_only": false,
+        "appropriate_depth": false,
+        "n_log_calls": 0,
+        "n_doc_calls": 0,
+        "total_calls": 0,
+        "trace_score": 0,
+        "trace_score_max": 5
+      },
+      "diagnosis_excerpt": "{\"name\": \"query_logs\", \"arguments\": {\"question\": \"What ERROR-level events appear in the BBS component?\"}}"
+    },
+    {
+      "incident_id": "INC-022",
+      "tier": 3,
+      "status": "ok",
+      "answer_grade": "miss",
+      "retrieval": {
+        "num_calls": 0,
+        "calls": [],
+        "precision": null,
+        "recall": 0.0,
+        "note": "no query_docs calls made"
+      },
+      "trace": {
+        "called_logs": false,
+        "called_docs": false,
+        "logs_before_docs": false,
+        "no_doc_only": false,
+        "appropriate_depth": false,
+        "n_log_calls": 0,
+        "n_doc_calls": 0,
+        "total_calls": 0,
+        "trace_score": 0,
+        "trace_score_max": 5
+      },
+      "diagnosis_excerpt": "{\"name\": \"query_logs\", \"arguments\": {\"question\": \"What ERROR-level events appear in the ROUTER component?\"}}"
+    },
+    {
+      "incident_id": "INC-023",
+      "tier": 3,
+      "status": "ok",
+      "answer_grade": "miss",
+      "retrieval": {
+        "num_calls": 0,
+        "calls": [],
+        "precision": null,
+        "recall": 0.0,
+        "note": "no query_docs calls made"
+      },
+      "trace": {
+        "called_logs": false,
+        "called_docs": false,
+        "logs_before_docs": false,
+        "no_doc_only": false,
+        "appropriate_depth": false,
+        "n_log_calls": 0,
+        "n_doc_calls": 0,
+        "total_calls": 0,
+        "trace_score": 0,
+        "trace_score_max": 5
+      },
+      "diagnosis_excerpt": "{\"name\": \"query_logs\", \"arguments\": {\"question\": \"What ERROR-level events appear in the BLOBSTORE component?\"}}"
+    },
+    {
+      "incident_id": "INC-024",
+      "tier": 3,
+      "status": "ok",
+      "answer_grade": "miss",
+      "retrieval": {
+        "num_calls": 0,
+        "calls": [],
+        "precision": null,
+        "recall": 0.0,
+        "note": "no query_docs calls made"
+      },
+      "trace": {
+        "called_logs": false,
+        "called_docs": false,
+        "logs_before_docs": false,
+        "no_doc_only": false,
+        "appropriate_depth": false,
+        "n_log_calls": 0,
+        "n_doc_calls": 0,
+        "total_calls": 0,
+        "trace_score": 0,
+        "trace_score_max": 5
+      },
+      "diagnosis_excerpt": "{\"name\": \"query_logs\", \"arguments\": {\"question\": \"What ERROR-level events appear in the ROUTER component for app-oghb8v v3.1 in org-payments?\"}}"
+    },
+    {
+      "incident_id": "INC-025",
+      "tier": 3,
+      "status": "ok",
+      "answer_grade": "miss",
+      "retrieval": {
+        "num_calls": 0,
+        "calls": [],
+        "precision": null,
+        "recall": 0.0,
+        "note": "no query_docs calls made"
+      },
+      "trace": {
+        "called_logs": false,
+        "called_docs": false,
+        "logs_before_docs": false,
+        "no_doc_only": false,
+        "appropriate_depth": false,
+        "n_log_calls": 0,
+        "n_doc_calls": 0,
+        "total_calls": 0,
+        "trace_score": 0,
+        "trace_score_max": 5
+      },
+      "diagnosis_excerpt": "{\"name\": \"query_logs\", \"arguments\": {\"question\": \"What WARN-level events appear in the ROUTER component?\"}}"
+    }
+  ]
+}

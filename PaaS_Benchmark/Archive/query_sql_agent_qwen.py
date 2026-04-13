@@ -216,17 +216,10 @@ def build_agent(
         max_rows=max_rows,
     )
 
-    def _state_mod(state):
-        from langchain_core.messages import SystemMessage
-        msgs = state.get("messages", [])
-        if not msgs or not isinstance(msgs[0], SystemMessage):
-            return {"messages": [SystemMessage(content=system_prompt)] + list(msgs)}
-        return state
-
     agent = create_react_agent(
         llm,
         tools,
-        state_modifier=_state_mod,
+        prompt=system_prompt,
     )
 
     agent._max_iterations = max_iterations
