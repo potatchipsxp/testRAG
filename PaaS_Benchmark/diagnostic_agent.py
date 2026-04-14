@@ -36,7 +36,6 @@ import json
 import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-from langchain_openai import ChatOpenAI
 from langchain_core.tools import tool
 from langchain_core.messages import HumanMessage
 from langgraph.prebuilt import create_react_agent
@@ -54,14 +53,14 @@ from build_doc_index import DB_PATH as DOC_DB_PATH, COLLECTION_NAME as DOC_COLLE
 # ============================================================================
 
 # --- Diagnostic agent (orchestrator) ---
-DIAGNOSTIC_MODEL    = "qwen2.5-coder:7b"
+DIAGNOSTIC_MODEL    = "qwen2.5:latest"
 DIAGNOSTIC_BACKEND  = "qwen"       # "qwen" (ChatOpenAI/v1) or "ollama" (ChatOllama)
 DIAGNOSTIC_TEMP     = 0.0
 DIAGNOSTIC_BASE_URL = "http://localhost:11434/v1"   # only used for "qwen" backend
 DIAGNOSTIC_API_KEY  = "ollama"                      # only used for "qwen" backend
 
 # --- SQL agent ---
-SQL_MODEL           = "qwen2.5-coder:7b"
+SQL_MODEL           = "qwen2.5:latest"
 SQL_BACKEND         = "qwen"       # "qwen" (recommended) or "ollama"
 SQL_TEMP            = 0.0
 SQL_BASE_URL        = "http://localhost:11434/v1"
@@ -160,12 +159,42 @@ Rules:
 - If results are empty or the question cannot be answered, say so clearly.
 - Use column aliases (AS) for readable output."""
 
+    # Use prompt= with a callable. In modern langgraph (>=0.2.x), the
+    # `state_modifier` parameter has been removed; `prompt` is the replacement
+    # and accepts str | SystemMessage | Callable. Passing a plain string can
+    # fail to trigger bind_tools() in some intermediate versions, so we pass
+    # a callable that returns a list[BaseMessage] — the contract for callable
+    # prompts in current langgraph. This reliably triggers tool binding so
+    # Qwen routes tool calls through langgraph instead of emitting them as
+    # raw JSON in the assistant message.
+    from langchain_core.messages import SystemMessage
+
+    def _state_mod(state):
+        msgs = list(state.get("messages", []))
+        if not msgs or not isinstance(msgs[0], SystemMessage):
+            return [SystemMessage(content=system_prompt)] + msgs
+        return msgs
+
     if backend == "qwen":
-        llm = ChatOpenAI(
-            model=model, temperature=temp, base_url=base_url, api_key=api_key,
-        )
+        # Use langchain_ollama.ChatOllama (NOT ChatOpenAI -> /v1).
+        # ChatOpenAI talks to Ollama's OpenAI-compatible /v1 endpoint, but that
+        # endpoint does NOT reliably populate the OpenAI-format `tool_calls`
+        # field in responses — Qwen's tool calls come back as raw JSON in
+        # message.content, so langchain-openai never sees a tool call and
+        # langgraph never executes one. (bind_tools succeeds in sending the
+        # schemas to the model, but the return path is broken.)
+        #
+        # langchain_ollama.ChatOllama uses Ollama's native /api/chat endpoint
+        # and correctly parses tool_calls into AIMessage.tool_calls, which is
+        # what langgraph needs to route them through the tool execution loop.
+        from langchain_ollama import ChatOllama as _ChatOllama
+        # base_url for ChatOllama is the bare host (no /v1 suffix)
+        ollama_base = base_url.rstrip("/")
+        if ollama_base.endswith("/v1"):
+            ollama_base = ollama_base[:-3]
+        llm = _ChatOllama(model=model, temperature=temp, base_url=ollama_base)
         tools = [QuerySQLDatabaseTool(db=db)]
-        agent = _cra(llm, tools, prompt=system_prompt)
+        agent = _cra(llm, tools, prompt=_state_mod)
 
     elif backend == "ollama":
         from langchain_ollama import ChatOllama
@@ -176,10 +205,21 @@ Rules:
             QuerySQLCheckerTool(db=db, llm=llm),
             QuerySQLDatabaseTool(db=db),
         ]
-        agent = _cra(llm, tools, prompt=system_prompt)
+        agent = _cra(llm, tools, prompt=_state_mod)
 
     else:
         raise ValueError(f"Unknown SQL backend: {backend!r}. Use 'qwen' or 'ollama'.")
+
+    # Sanity check: verify tools were actually bound to the LLM.
+    # If this prints None/empty, the agent will silently emit tool calls as
+    # JSON text instead of routing them through the tool execution loop.
+    try:
+        bound_tools = getattr(llm.bind_tools(tools), "kwargs", {}).get("tools")
+        if not bound_tools:
+            print(f"  WARNING: SQL agent LLM ({model}) has no bound tools — "
+                  f"tool calls will not execute.")
+    except Exception as e:
+        print(f"  WARNING: could not verify tool binding for SQL agent: {e}")
 
     agent._max_iterations = max_iter
 
@@ -202,9 +242,14 @@ def _build_diagnostic_llm(
     api_key=DIAGNOSTIC_API_KEY,
 ):
     if backend == "qwen":
-        return ChatOpenAI(
-            model=model, temperature=temp, base_url=base_url, api_key=api_key,
-        )
+        # See note in _build_sql_agent: native ChatOllama, not ChatOpenAI->/v1.
+        # The /v1 endpoint does not return tool_calls in the structured field,
+        # so the orchestrator never sees its sub-agents being called.
+        from langchain_ollama import ChatOllama as _ChatOllama
+        ollama_base = base_url.rstrip("/")
+        if ollama_base.endswith("/v1"):
+            ollama_base = ollama_base[:-3]
+        return _ChatOllama(model=model, temperature=temp, base_url=ollama_base)
     elif backend == "ollama":
         from langchain_ollama import ChatOllama
         return ChatOllama(model=model, temperature=temp, base_url=base_url)
@@ -421,8 +466,31 @@ def build_diagnostic_agent(
         doc_collection=doc_collection,
     )
 
-    agent = create_react_agent(llm, tools, prompt=SYSTEM_PROMPT)
+    # See the note in _build_sql_agent: pass prompt= as a callable that
+    # returns list[BaseMessage]. Modern langgraph removed state_modifier;
+    # a callable prompt is the cross-version-safe form that reliably
+    # triggers bind_tools() on the LLM.
+    from langchain_core.messages import SystemMessage
+
+    def _state_mod(state):
+        msgs = list(state.get("messages", []))
+        if not msgs or not isinstance(msgs[0], SystemMessage):
+            return [SystemMessage(content=SYSTEM_PROMPT)] + msgs
+        return msgs
+
+    agent = create_react_agent(llm, tools, prompt=_state_mod)
     agent._max_iterations = max_turns
+
+    # Sanity check tool binding on the orchestrator LLM.
+    try:
+        bound_tools = getattr(llm.bind_tools(tools), "kwargs", {}).get("tools")
+        if not bound_tools:
+            print(f"  WARNING: diagnostic LLM ({diagnostic_model}) has no bound "
+                  f"tools — orchestrator will not execute tool calls.")
+        else:
+            print(f"  Diagnostic LLM bound {len(bound_tools)} tool(s) successfully.")
+    except Exception as e:
+        print(f"  WARNING: could not verify tool binding for diagnostic agent: {e}")
 
     return agent, tools, trace
 
