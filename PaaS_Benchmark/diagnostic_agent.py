@@ -41,7 +41,8 @@ from langchain_core.tools import tool
 from langchain_core.messages import HumanMessage
 from langgraph.prebuilt import create_react_agent
 
-from query_doc_agent import query as doc_query
+from doc_agent import query as doc_query
+from sql_agent import build_agent as build_sql_agent
 from build_doc_index import DB_PATH as DOC_DB_PATH, COLLECTION_NAME as DOC_COLLECTION
 
 
@@ -92,143 +93,20 @@ OUTPUT_FILE = (
 
 
 # ============================================================================
-# SQL AGENT BUILDER
+# SQL AGENT IMPORT
 #
-# Supports two backends so any Ollama model can be used as the SQL agent:
-#   "qwen"   — ChatOpenAI pointed at /v1. Required for models that emit
-#              native OpenAI function-calling (Qwen2.5, Mistral-Nemo, etc.)
-#   "ollama" — ChatOllama with text-based ReAct. Works with llama3.2 and
-#              other models that do not natively support function-calling.
-#              Uses 2-tool toolkit (query_checker + query).
+# The SQL agent is defined in sql_agent.py. We import its build_agent function
+# here (aliased as build_sql_agent at the top of this file). The orchestrator
+# only needs the agent object plus a tiny helper to pull the final text answer
+# out of a langgraph result dict.
 # ============================================================================
 
-def _build_sql_agent(
-    model=SQL_MODEL,
-    backend=SQL_BACKEND,
-    temp=SQL_TEMP,
-    base_url=SQL_BASE_URL,
-    api_key=SQL_API_KEY,
-    db_uri=SQL_DB_URI,
-    max_iter=SQL_MAX_ITER,
-    max_rows=SQL_MAX_ROWS,
-):
-    """
-    Build and return (agent, extract_fn) for the given SQL model config.
+def _sql_extract(result):
+    """Pull the final text answer out of an SQL agent invocation result."""
+    messages = result.get("messages", [])
+    return messages[-1].content if messages else str(result)
 
-    Returns:
-        agent       — callable via agent.invoke({"messages": [...]})
-        extract_fn  — pulls the final text answer out of the result dict
-    """
-    from langchain_community.utilities import SQLDatabase
-    from langchain_community.tools import QuerySQLDatabaseTool
-    from langgraph.prebuilt import create_react_agent as _cra
 
-    db = SQLDatabase.from_uri(db_uri, sample_rows_in_table_info=2)
-
-    schema_description = f"""
-DATABASE: PaaS platform logs (Cloud Foundry-compatible).
-
-TABLE: logs
-  row_uuid      TEXT  — unique row identifier
-  timestamp     TEXT  — ISO-8601 datetime e.g. '2008-11-10T10:30:00Z'
-  source_system TEXT  — always 'paas_platform'
-  component     TEXT  — e.g. 'ROUTER', 'CELL', 'SCHEDULER', 'MESSAGE_BUS',
-                        'APP', 'HEALTH', 'METRICS', 'CONTROLLER', 'AUTOSCALER',
-                        'NETWORK', 'BUILD_SERVICE', 'BLOB_STORE', 'SERVICE_BROKER'
-  subcomponent  TEXT  — Java class or process name within the component
-  level         TEXT  — 'INFO', 'WARN', or 'ERROR'
-  node_id       TEXT  — IP address or cell identifier e.g. 'cell-009'
-  instance_id   TEXT  — container instance identifier (may be NULL)
-  event_type    TEXT  — e.g. 'data_transfer', 'heartbeat', 'error', 'startup'
-  message       TEXT  — raw log message text
-  thread_id     INTEGER
-  block_id      TEXT  — NULL for non-block events
-  source_file   TEXT
-
-ONLY ONE TABLE EXISTS: logs. Do not reference any other table name.
-Always LIMIT results to {max_rows} rows unless asked for more.
-"""
-
-    system_prompt = f"""You are an expert SQL analyst diagnosing PaaS platform incidents.
-Answer questions by querying the log database using the available tools.
-
-{schema_description}
-
-Rules:
-- Write raw SQL — no markdown backticks, no surrounding quotes.
-- Answer only from query results — do not guess or hallucinate.
-- If results are empty or the question cannot be answered, say so clearly.
-- Use column aliases (AS) for readable output."""
-
-    # Use prompt= with a callable. In modern langgraph (>=0.2.x), the
-    # `state_modifier` parameter has been removed; `prompt` is the replacement
-    # and accepts str | SystemMessage | Callable. Passing a plain string can
-    # fail to trigger bind_tools() in some intermediate versions, so we pass
-    # a callable that returns a list[BaseMessage] — the contract for callable
-    # prompts in current langgraph. This reliably triggers tool binding so
-    # Qwen routes tool calls through langgraph instead of emitting them as
-    # raw JSON in the assistant message.
-    from langchain_core.messages import SystemMessage
-
-    def _state_mod(state):
-        msgs = list(state.get("messages", []))
-        if not msgs or not isinstance(msgs[0], SystemMessage):
-            return [SystemMessage(content=system_prompt)] + msgs
-        return msgs
-
-    if backend == "qwen":
-        # Use langchain_ollama.ChatOllama (NOT ChatOpenAI -> /v1).
-        # ChatOpenAI talks to Ollama's OpenAI-compatible /v1 endpoint, but that
-        # endpoint does NOT reliably populate the OpenAI-format `tool_calls`
-        # field in responses — Qwen's tool calls come back as raw JSON in
-        # message.content, so langchain-openai never sees a tool call and
-        # langgraph never executes one. (bind_tools succeeds in sending the
-        # schemas to the model, but the return path is broken.)
-        #
-        # langchain_ollama.ChatOllama uses Ollama's native /api/chat endpoint
-        # and correctly parses tool_calls into AIMessage.tool_calls, which is
-        # what langgraph needs to route them through the tool execution loop.
-        from langchain_ollama import ChatOllama as _ChatOllama
-        # base_url for ChatOllama is the bare host (no /v1 suffix)
-        ollama_base = base_url.rstrip("/")
-        if ollama_base.endswith("/v1"):
-            ollama_base = ollama_base[:-3]
-        llm = _ChatOllama(model=model, temperature=temp, base_url=ollama_base)
-        tools = [QuerySQLDatabaseTool(db=db)]
-        agent = _cra(llm, tools, prompt=_state_mod)
-
-    elif backend == "ollama":
-        from langchain_ollama import ChatOllama
-        from langchain_community.tools.sql_database.tool import QuerySQLCheckerTool
-
-        llm = ChatOllama(model=model, temperature=temp, base_url=base_url)
-        tools = [
-            QuerySQLCheckerTool(db=db, llm=llm),
-            QuerySQLDatabaseTool(db=db),
-        ]
-        agent = _cra(llm, tools, prompt=_state_mod)
-
-    else:
-        raise ValueError(f"Unknown SQL backend: {backend!r}. Use 'qwen' or 'ollama'.")
-
-    # Sanity check: verify tools were actually bound to the LLM.
-    # If this prints None/empty, the agent will silently emit tool calls as
-    # JSON text instead of routing them through the tool execution loop.
-    try:
-        bound_tools = getattr(llm.bind_tools(tools), "kwargs", {}).get("tools")
-        if not bound_tools:
-            print(f"  WARNING: SQL agent LLM ({model}) has no bound tools — "
-                  f"tool calls will not execute.")
-    except Exception as e:
-        print(f"  WARNING: could not verify tool binding for SQL agent: {e}")
-
-    agent._max_iterations = max_iter
-
-    def extract_fn(result):
-        messages = result.get("messages", [])
-        return messages[-1].content if messages else str(result)
-
-    return agent, extract_fn
 
 
 # ============================================================================
@@ -243,7 +121,7 @@ def _build_diagnostic_llm(
     api_key=DIAGNOSTIC_API_KEY,
 ):
     if backend == "qwen":
-        # See note in _build_sql_agent: native ChatOllama, not ChatOpenAI->/v1.
+        # Same rationale as in sql_agent.py: native ChatOllama, not ChatOpenAI->/v1.
         # The /v1 endpoint does not return tool_calls in the structured field,
         # so the orchestrator never sees its sub-agents being called.
         from langchain_ollama import ChatOllama as _ChatOllama
@@ -304,15 +182,20 @@ def build_tools(
     """
     trace, record = _make_trace()
 
-    sql_agent, sql_extract = _build_sql_agent(
-        model=sql_model,
+    # Build the SQL sub-agent. The build_sql_agent function is sql_agent.build_agent
+    # (imported at the top of this file). It returns (agent, system_prompt) but we
+    # only need the agent — the system prompt is already embedded in it. We pair
+    # it with the local _sql_extract helper for pulling the final answer text.
+    sql_agent, _ = build_sql_agent(
+        llm_model=sql_model,
         backend=sql_backend,
-        temp=sql_temp,
-        base_url=sql_base_url,
-        api_key=sql_api_key,
+        llm_temp=sql_temp,
+        llm_base_url=sql_base_url,
         db_uri=sql_db_uri,
-        max_iter=sql_max_iter,
+        max_iterations=sql_max_iter,
+        verbose=False,
     )
+    sql_extract = _sql_extract
 
     @tool
     def query_logs(question: str) -> str:
@@ -474,7 +357,7 @@ def build_diagnostic_agent(
         doc_collection=doc_collection,
     )
 
-    # See the note in _build_sql_agent: pass prompt= as a callable that
+    # Same rationale as in sql_agent.py: pass prompt= as a callable that
     # returns list[BaseMessage]. Modern langgraph removed state_modifier;
     # a callable prompt is the cross-version-safe form that reliably
     # triggers bind_tools() on the LLM.
@@ -613,63 +496,57 @@ def save_results(results, output_file=OUTPUT_FILE):
 
 
 # ============================================================================
-# MAIN
+# SMOKE TEST  (NOT a benchmark — runs 2 incidents to verify the orchestrator
+# is wired up and that both sub-agents are reachable.)
+#
+# To run the actual 25-incident benchmark, use:  python run_benchmark.py
 # ============================================================================
 
 if __name__ == "__main__":
-
+    print("=" * 70)
+    print("DIAGNOSTIC AGENT SMOKE TEST")
+    print("=" * 70)
+    print("This is NOT the benchmark. It runs 2 sample incidents to verify the")
+    print("orchestrator and both sub-agents are wired up correctly.")
+    print("To run the full 25-incident benchmark: python run_benchmark.py")
+    print("=" * 70)
+    print()
     print(f"Diagnostic model : {DIAGNOSTIC_MODEL} ({DIAGNOSTIC_BACKEND})")
     print(f"SQL model        : {SQL_MODEL} ({SQL_BACKEND})")
     print(f"Doc model        : {DOC_MODEL} ({DOC_BACKEND})")
-    print(f"Output file      : {OUTPUT_FILE}")
     print()
 
-    # Build once — reused across all scenarios in this run.
     agent, tools, trace = build_diagnostic_agent()
 
-    # Sample scenarios.
-    # To run all 25, replace with:
-    from benchmark_incidents import BENCHMARK_CASES
-    scenarios = [{"incident_id": c["incident_id"], "question": c["question"]}
-                for c in BENCHMARK_CASES]
-    # scenarios = [
-    #     {
-    #         "incident_id": "INC-008",
-    #         "question": (
-    #             "payments-api is returning sustained 503s. Metrics show the "
-    #             "database connection pool climbing. An autoscaler scale-out fired "
-    #             "but the 503s continued even after new instances started. "
-    #             "What is the root cause?"
-    #         ),
-    #     },
-    #     {
-    #         "incident_id": "INC-016",
-    #         "question": (
-    #             "Multiple platform components appear to be failing simultaneously: "
-    #             "the routing table is stale, cell heartbeats are missing, and Diego "
-    #             "is evacuating cells. But the cells themselves show no errors in their "
-    #             "own logs. What is causing this?"
-    #         ),
-    #     },
-    #     {
-    #         "incident_id": "INC-025",
-    #         "question": (
-    #             "At a specific time, all inter-service communication on the platform "
-    #             "failed simultaneously with TLS errors. Six hours earlier there were "
-    #             "CERT WARNING messages in the logs. What happened?"
-    #         ),
-    #     },
-    # ]
+    smoke_scenarios = [
+        {
+            "incident_id": "SMOKE-001",
+            "question": (
+                "payments-api is returning sustained 503s. Metrics show the "
+                "database connection pool climbing. An autoscaler scale-out fired "
+                "but the 503s continued even after new instances started. "
+                "What is the root cause?"
+            ),
+        },
+        {
+            "incident_id": "SMOKE-002",
+            "question": (
+                "All inter-service communication on the platform failed "
+                "simultaneously with TLS handshake errors. Six hours earlier "
+                "there were CERT WARNING messages in the logs. What happened?"
+            ),
+        },
+    ]
 
-    all_results = []
-    for scenario in scenarios:
-        result = diagnose(
+    for scenario in smoke_scenarios:
+        diagnose(
             incident_id=scenario["incident_id"],
             question=scenario["question"],
             agent=agent,
             trace=trace,
             verbose=VERBOSE,
         )
-        all_results.append(result)
 
-    save_results(all_results)
+    print()
+    print("Smoke test complete. If both incidents made tool calls and returned a")
+    print("non-empty diagnosis, the agent is wired up correctly.")

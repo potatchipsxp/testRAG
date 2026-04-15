@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """
-build_index.py
+build_log_index.py
 
-Index HDFS log data (JSONL format) into ChromaDB.
+Index log data (JSONL format) into ChromaDB for retrieval by the SQL agent's
+embedding-based fallback path. Companion to build_doc_index.py, which indexes
+the documentation corpus.
 
 Each log record becomes a "document" — the message field is embedded,
 and all structured fields (level, component, event_type, node_id, block_id, etc.)
@@ -12,7 +14,7 @@ When you add synthetic labeled errors to the JSONL later, they will be
 indexed automatically alongside the real records the next time you run this.
 
 Edit the CONFIG section, then run:
-    python build_index.py
+    python build_log_index.py
 """
 
 import os

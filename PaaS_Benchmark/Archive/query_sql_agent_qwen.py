@@ -54,7 +54,7 @@ INCLUDE_TABLES = ["logs"]
 # --- LLM ---
 # Qwen2.5-coder is recommended — strong SQL + reliable tool calling.
 # Other good options: "qwen2.5:7b", "qwen2.5:14b", "qwen2.5-coder:14b"
-LLM_MODEL    = "qwen2.5-coder:7b"
+LLM_MODEL    = "qwen2.5:latest"
 LLM_TEMP     = 0.0
 # Ollama's OpenAI-compatible endpoint — required for correct tool call routing
 LLM_BASE_URL = "http://localhost:11434/v1"
@@ -216,13 +216,34 @@ def build_agent(
         max_rows=max_rows,
     )
 
+    def _state_mod(state):
+        from langchain_core.messages import SystemMessage
+        msgs = list(state.get("messages", []))
+        if not msgs or not isinstance(msgs[0], SystemMessage):
+            return [SystemMessage(content=system_prompt)] + msgs
+        return msgs
+
     agent = create_react_agent(
         llm,
         tools,
-        prompt=system_prompt,
+        prompt=_state_mod,
     )
 
     agent._max_iterations = max_iterations
+
+    # Sanity check: verify Qwen actually received tool schemas via bind_tools().
+    # If this prints empty, the agent will emit tool calls as raw JSON text
+    # in the assistant message instead of executing them.
+    try:
+        bound_tools = getattr(llm.bind_tools(tools), "kwargs", {}).get("tools")
+        if not bound_tools:
+            print(f"  WARNING: LLM ({llm_model}) has no bound tools — "
+                  f"tool calls will not execute.")
+        elif verbose:
+            print(f"  Bound {len(bound_tools)} tool(s) to {llm_model}.")
+    except Exception as e:
+        print(f"  WARNING: could not verify tool binding: {e}")
+
     return agent, system_prompt
 
 

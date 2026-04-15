@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
 """
-query_doc_agent.py
+doc_agent.py
 
 Documentation RAG agent — answers questions about platform behaviour
 by retrieving from the synthesised doc corpus (doc_corpus.jsonl indexed
 by build_doc_index.py).
 
-This agent is one of two sub-agents called by diagnostic_agent.py.
-It can also be run standalone for testing.
+This is one of two sub-agents called by diagnostic_agent.py. It can also
+be run standalone for smoke-testing — see the __main__ block at the bottom.
 
-Edit the CONFIG section, then run:
-    python query_doc_agent.py
+To run the actual 25-incident benchmark, use:  python run_benchmark.py
 
 Dependencies:
     pip install chromadb sentence-transformers ollama
@@ -164,10 +163,20 @@ def save_results(results, output_file=OUTPUT_FILE):
 
 
 # ============================================================================
-# MAIN — standalone test queries
+# SMOKE TEST  (NOT a benchmark — runs a few sample questions to verify
+# the doc agent and retrieval pipeline are wired up correctly)
+#
+# To run the actual 25-incident benchmark, use:  python run_benchmark.py
 # ============================================================================
 
 if __name__ == "__main__":
+    print("=" * 70)
+    print("DOC AGENT SMOKE TEST")
+    print("=" * 70)
+    print("This is NOT the benchmark. It runs a handful of test questions to")
+    print("verify the doc agent and retrieval pipeline are wired up correctly.")
+    print("To run the benchmark: python run_benchmark.py")
+    print("=" * 70)
 
     test_queries = [
         {

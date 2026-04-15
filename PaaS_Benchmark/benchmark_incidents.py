@@ -2,80 +2,31 @@
 """
 benchmark_incidents.py
 ----------------------
-Evaluates a RAG configuration against the 25 synthetic PaaS incidents.
+Static data file: the 25 synthetic PaaS incidents used by the benchmark.
 
-One focused diagnostic question per incident, framed as an operator would
-ask it: "Error X is happening for app Y, what is the problem?"
+This file is data, not a script. It exposes a single module-level constant,
+BENCHMARK_CASES, which is a list of dicts — one per incident.
 
-Two evaluation layers:
-  1. RETRIEVAL — did the right log chunks come back?
-     Scored by checking whether expected signal phrases appear in the
-     combined text of retrieved chunks.
+It is imported by:
+  - run_benchmark.py    : iterates over BENCHMARK_CASES to build the run input
+  - Results/evaluate.py : maps incident_id -> case to score deterministic
+                          retrieval, trace, and answer-keyword metrics
 
-  2. ANSWER — did the LLM correctly diagnose the root cause?
-     Graded: full_credit | partial | miss
+To add or modify an incident, edit BENCHMARK_CASES below. Each entry has:
 
-Results are saved to benchmark_results.json and a summary is printed.
-
-Usage:
-    python benchmark_incidents.py
-
-Configure the CONFIG block to match your build_index.py settings.
+  incident_id      : INC-001 … INC-025
+  tier             : 1 (simple), 2 (cross-component), 3 (complex/distributed)
+  app_id           : the affected application identifier
+  org              : the org the app belongs to
+  question         : operator-style question referencing the actual symptom
+                     and application so the retrieval must target this incident
+  where_filter     : optional ChromaDB metadata pre-filter (or None)
+  retrieval_signals: short distinctive substrings from the real log messages —
+                     at least ONE must appear in the retrieved chunks to pass
+  answer_required  : ALL of these substrings (case-insensitive) must appear
+                     in the LLM answer for full_credit
+  answer_partial   : if answer_required fails, any hit here gives partial credit
 """
-
-import json
-import sys
-import time
-from pathlib import Path
-from datetime import datetime
-
-try:
-    from query_index import (
-        make_collection_name, get_collection,
-        retrieve_chunks, build_prompt, generate_answer,
-    )
-except ImportError:
-    sys.exit("query_index.py not found in current directory.")
-
-
-# ============================================================================
-# CONFIG — edit to match build_index.py settings
-# ============================================================================
-
-DB_PATH           = "./chroma_db"
-BASE_COLLECTION   = "logs"
-COLLECTION_SUFFIX = ""
-
-EMBEDDING_MODEL   = "all-MiniLM-L6-v2"
-CHUNK_METHOD      = "record"
-CHUNK_SIZE        = 1
-CHUNK_OVERLAP     = 0
-
-LLM_MODEL         = "llama3.2"
-N_RESULTS         = 15   # slightly wider to give retrieval a fair chance
-VERBOSE           = False  # set True to print LLM answers as they run
-
-RESULTS_FILE      = "benchmark_results.json"
-
-
-# ============================================================================
-# BENCHMARK CASES
-#
-# One case per incident.  Each case has:
-#
-#   incident_id      : INC-001 … INC-025
-#   tier             : 1 (simple), 2 (cross-component), 3 (complex/distributed)
-#   app_id           : the affected application identifier
-#   org              : the org the app belongs to
-#   question         : operator-style question referencing the actual symptom
-#                      and application so the retrieval must target this incident
-#   where_filter     : optional ChromaDB metadata pre-filter (or None)
-#   retrieval_signals: short distinctive substrings from the real log messages —
-#                      at least ONE must appear in the retrieved chunks to pass
-#   answer_required  : ALL of these substrings (case-insensitive) must appear
-#                      in the LLM answer for full_credit
-#   answer_partial   : if answer_required fails, any hit here gives partial credit
-# ============================================================================
 
 BENCHMARK_CASES = [
 
@@ -633,224 +584,3 @@ BENCHMARK_CASES = [
         "answer_partial":  ["expire", "alert", "monitor", "automat"],
     },
 ]
-
-
-# ============================================================================
-# SCORING
-# ============================================================================
-
-def score_retrieval(chunks: list[dict], signals: list[str]) -> dict:
-    """
-    Check whether any retrieved chunk text contains at least one signal phrase.
-    Returns per-signal hit/miss and an overall pass/fail.
-    """
-    combined = " ".join(c["text"] for c in chunks).lower()
-    hits = {s: s.lower() in combined for s in signals}
-    passed = any(hits.values())
-    return {
-        "passed": passed,
-        "signal_hits": hits,
-        "hit_count": sum(hits.values()),
-        "total_signals": len(signals),
-    }
-
-
-def score_answer(answer: str, required: list[str], partial: list[str]) -> dict:
-    """
-    Grade LLM answer:
-      full_credit  — all required keywords present
-      partial      — required fails but ≥1 partial keyword present
-      miss         — nothing matches
-    """
-    a = answer.lower()
-    req_hits = {k: k.lower() in a for k in required}
-    par_hits = {k: k.lower() in a for k in partial}
-
-    if all(req_hits.values()):
-        grade = "full_credit"
-    elif any(par_hits.values()):
-        grade = "partial"
-    else:
-        grade = "miss"
-
-    return {
-        "grade": grade,
-        "required_hits": req_hits,
-        "partial_hits": par_hits,
-    }
-
-
-# ============================================================================
-# RUNNER
-# ============================================================================
-
-def run_benchmark(collection_name: str) -> list[dict]:
-    collection = get_collection(collection_name)
-    if collection.count() == 0:
-        sys.exit(f"Collection '{collection_name}' is empty.")
-
-    results = []
-    total   = len(BENCHMARK_CASES)
-
-    print(f"\nRunning {total} benchmark cases against '{collection_name}'")
-    print(f"Model: {LLM_MODEL}  |  Embeddings: {EMBEDDING_MODEL}  |  k={N_RESULTS}\n")
-
-    for i, case in enumerate(BENCHMARK_CASES, 1):
-        inc_id = case["incident_id"]
-        tier   = case["tier"]
-
-        print(f"[{i:02d}/{total}] {inc_id} T{tier}  ", end="", flush=True)
-        t0 = time.time()
-
-        # ── Retrieval ────────────────────────────────────────────────────
-        chunks = retrieve_chunks(
-            case["question"], collection,
-            EMBEDDING_MODEL, N_RESULTS, case.get("where_filter"),
-        )
-        retrieval_score = score_retrieval(chunks, case["retrieval_signals"])
-
-        # ── Generation ───────────────────────────────────────────────────
-        prompt = build_prompt(case["question"], chunks)
-        answer = generate_answer(prompt, LLM_MODEL)
-        answer_score = score_answer(
-            answer, case["answer_required"], case["answer_partial"]
-        )
-
-        elapsed = time.time() - t0
-        r_flag  = "✓" if retrieval_score["passed"] else "✗"
-        a_flag  = {"full_credit": "✓", "partial": "~", "miss": "✗"}[answer_score["grade"]]
-        print(f"ret:{r_flag}  ans:{a_flag}  ({elapsed:.1f}s)")
-
-        if VERBOSE:
-            print(f"  Q: {case['question'][:90]}")
-            print(f"  A: {answer[:140]}")
-
-        results.append({
-            "incident_id":   inc_id,
-            "tier":          tier,
-            "app_id":        case["app_id"],
-            "org":           case["org"],
-            "question":      case["question"],
-            "where_filter":  case.get("where_filter"),
-            "answer":        answer,
-            "retrieval":     retrieval_score,
-            "answer_score":  answer_score,
-            "elapsed_s":     round(elapsed, 2),
-            # Full context passed to the LLM — each chunk as retrieved from
-            # ChromaDB, ordered by ascending distance (closest first).
-            # Useful for manually grading retrieval quality beyond signal matching.
-            "retrieved_chunks": [
-                {
-                    "rank":       rank,
-                    "distance":   c.get("distance"),
-                    "text":       c["text"],
-                    "metadata":   c["metadata"],
-                }
-                for rank, c in enumerate(chunks, 1)
-            ],
-            "config": {
-                "collection":      collection_name,
-                "embedding_model": EMBEDDING_MODEL,
-                "llm_model":       LLM_MODEL,
-                "chunk_method":    CHUNK_METHOD,
-                "n_results":       N_RESULTS,
-            },
-        })
-
-    return results
-
-
-# ============================================================================
-# SUMMARY
-# ============================================================================
-
-def print_summary(results: list[dict]):
-    total     = len(results)
-    ret_pass  = sum(1 for r in results if r["retrieval"]["passed"])
-    full      = sum(1 for r in results if r["answer_score"]["grade"] == "full_credit")
-    partial   = sum(1 for r in results if r["answer_score"]["grade"] == "partial")
-    miss      = sum(1 for r in results if r["answer_score"]["grade"] == "miss")
-
-    pct = lambda n: f"{100 * n // total}%"
-
-    print("\n" + "═" * 62)
-    print("  BENCHMARK SUMMARY")
-    print("═" * 62)
-    print(f"  Total incidents    : {total}")
-    print(f"  Retrieval pass     : {ret_pass}/{total}  ({pct(ret_pass)})")
-    print(f"  Answer full credit : {full}/{total}  ({pct(full)})")
-    print(f"  Answer partial     : {partial}/{total}  ({pct(partial)})")
-    print(f"  Answer miss        : {miss}/{total}  ({pct(miss)})")
-
-    # ── By tier ──────────────────────────────────────────────────────────
-    print("\n  ── By tier ─────────────────────────────────────────")
-    for tier in (1, 2, 3):
-        t_rows = [r for r in results if r["tier"] == tier]
-        if not t_rows:
-            continue
-        t_ret  = sum(1 for r in t_rows if r["retrieval"]["passed"])
-        t_full = sum(1 for r in t_rows if r["answer_score"]["grade"] == "full_credit")
-        t_par  = sum(1 for r in t_rows if r["answer_score"]["grade"] == "partial")
-        print(f"  Tier {tier}  ({len(t_rows)} cases)   "
-              f"ret:{t_ret}/{len(t_rows)}   "
-              f"full:{t_full}/{len(t_rows)}   "
-              f"partial:{t_par}/{len(t_rows)}")
-
-    # ── Answer misses ─────────────────────────────────────────────────────
-    misses = [r for r in results if r["answer_score"]["grade"] == "miss"]
-    if misses:
-        print("\n  ── Answer misses (worth investigating) ──────────────")
-        for r in misses:
-            print(f"  {r['incident_id']} T{r['tier']}  app={r['app_id']}")
-            print(f"    required: {list(r['answer_score']['required_hits'].keys())}")
-
-    # ── Retrieval failures ────────────────────────────────────────────────
-    ret_fails = [r for r in results if not r["retrieval"]["passed"]]
-    if ret_fails:
-        print("\n  ── Retrieval failures ───────────────────────────────")
-        for r in ret_fails:
-            missed = [s for s, hit in r["retrieval"]["signal_hits"].items() if not hit]
-            print(f"  {r['incident_id']} T{r['tier']}  app={r['app_id']}")
-            print(f"    missed signals: {missed}")
-
-    print("═" * 62)
-
-
-# ============================================================================
-# MAIN
-# ============================================================================
-
-if __name__ == "__main__":
-    collection_name = make_collection_name(
-        BASE_COLLECTION, EMBEDDING_MODEL, CHUNK_METHOD,
-        CHUNK_SIZE, CHUNK_OVERLAP, COLLECTION_SUFFIX,
-    )
-
-    results = run_benchmark(collection_name)
-
-    output = {
-        "run_timestamp": datetime.utcnow().isoformat() + "Z",
-        "config": {
-            "collection":      collection_name,
-            "embedding_model": EMBEDDING_MODEL,
-            "llm_model":       LLM_MODEL,
-            "chunk_method":    CHUNK_METHOD,
-            "chunk_size":      CHUNK_SIZE,
-            "chunk_overlap":   CHUNK_OVERLAP,
-            "n_results":       N_RESULTS,
-        },
-        "summary": {
-            "total_cases":        len(results),
-            "retrieval_pass":     sum(1 for r in results if r["retrieval"]["passed"]),
-            "answer_full_credit": sum(1 for r in results if r["answer_score"]["grade"] == "full_credit"),
-            "answer_partial":     sum(1 for r in results if r["answer_score"]["grade"] == "partial"),
-            "answer_miss":        sum(1 for r in results if r["answer_score"]["grade"] == "miss"),
-        },
-        "cases": results,
-    }
-
-    with open(RESULTS_FILE, "w") as f:
-        json.dump(output, f, indent=2)
-
-    print_summary(results)
-    print(f"\n  Full results saved to {RESULTS_FILE}")
