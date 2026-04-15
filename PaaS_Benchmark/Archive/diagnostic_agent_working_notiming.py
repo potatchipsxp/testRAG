@@ -33,7 +33,6 @@ Dependencies:
 """
 
 import json
-import time
 import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -267,11 +266,8 @@ def _build_diagnostic_llm(
 def _make_trace():
     """Return a fresh (trace_list, record_fn) pair."""
     trace = []
-    def record(tool_name, inputs, result, duration_ms=None):
-        entry = {"tool": tool_name, "inputs": inputs, "result": result}
-        if duration_ms is not None:
-            entry["duration_ms"] = round(duration_ms, 1)
-        trace.append(entry)
+    def record(tool_name, inputs, result):
+        trace.append({"tool": tool_name, "inputs": inputs, "result": result})
     return trace, record
 
 
@@ -332,14 +328,12 @@ def build_tools(
           "What is the sequence of events for the MESSAGE_BUS component?"
           "Which node_id had the most ERROR-level entries?"
         """
-        t0 = time.perf_counter()
         result = sql_agent.invoke(
             {"messages": [HumanMessage(content=question)]},
             config={"recursion_limit": sql_max_iter * 3},
         )
         answer = sql_extract(result)
-        duration_ms = (time.perf_counter() - t0) * 1000
-        record("query_logs", {"question": question}, answer, duration_ms)
+        record("query_logs", {"question": question}, answer)
         return answer
 
     @tool
@@ -361,7 +355,6 @@ def build_tools(
           "What is the runbook for simultaneous instance crashes on a cell?"
           "What configuration value must exceed instance startup time?"
         """
-        t0 = time.perf_counter()
         result = doc_query(
             question=question,
             n_results=doc_n_results,
@@ -370,11 +363,10 @@ def build_tools(
             collection_name=doc_collection,
             verbose=False,
         )
-        duration_ms = (time.perf_counter() - t0) * 1000
         record("query_docs", {"question": question}, {
             "answer":         result["answer"],
             "retrieved_docs": result["retrieved_docs"],
-        }, duration_ms)
+        })
         return result["answer"]
 
     return [query_logs, query_docs], trace
@@ -542,7 +534,6 @@ def diagnose(
     diagnosis = None
     status    = "ok"
 
-    t_start = time.perf_counter()
     try:
         result = agent.invoke(
             {"messages": [HumanMessage(content=question)]},
@@ -554,34 +545,13 @@ def diagnose(
     except Exception as e:
         diagnosis = f"Agent error: {e}"
         status    = "error"
-    total_seconds = time.perf_counter() - t_start
-
-    # Timing breakdown: separate tool time (SQL + doc agents) from orchestrator
-    # time (the diagnostic LLM's own reasoning between tool calls). Tool time
-    # is the sum of per-call durations from the trace; orchestrator time is
-    # whatever wall-clock is left over after tools finish.
-    tool_ms_total = sum(c.get("duration_ms", 0) for c in trace)
-    sql_ms        = sum(c.get("duration_ms", 0) for c in trace if c["tool"] == "query_logs")
-    doc_ms        = sum(c.get("duration_ms", 0) for c in trace if c["tool"] == "query_docs")
-    orchestrator_ms = max(0.0, total_seconds * 1000 - tool_ms_total)
-
-    timing = {
-        "total_seconds":        round(total_seconds, 3),
-        "tool_ms_total":        round(tool_ms_total, 1),
-        "sql_ms_total":         round(sql_ms, 1),
-        "doc_ms_total":         round(doc_ms, 1),
-        "orchestrator_ms":      round(orchestrator_ms, 1),
-        "n_tool_calls":         len(trace),
-        "mean_ms_per_tool_call": round(tool_ms_total / len(trace), 1) if trace else 0.0,
-    }
 
     if verbose:
         print(f"\n{'─' * 70}")
-        print(f"TOOL CALLS: {len(trace)}   TOTAL TIME: {total_seconds:.1f}s")
+        print(f"TOOL CALLS: {len(trace)}")
         for i, call in enumerate(trace, 1):
-            q  = call["inputs"].get("question", "")[:60]
-            dt = call.get("duration_ms", 0)
-            print(f"  {i}. {call['tool']}({q!r})  [{dt/1000:.1f}s]")
+            q = call["inputs"].get("question", "")[:60]
+            print(f"  {i}. {call['tool']}({q!r})")
         print("\nDIAGNOSIS:")
         print("-" * 70)
         print(diagnosis)
@@ -593,7 +563,6 @@ def diagnose(
         "diagnosis":       diagnosis,
         "status":          status,
         "tool_call_trace": list(trace),
-        "timing":          timing,
         # Model config recorded in each result for self-contained eval reports
         # Read from module-level constants — diagnose() is config-agnostic
         "model_config": {
