@@ -82,7 +82,7 @@ MAX_TURNS           = 6
 VERBOSE             = True
 
 # Output filename encodes the model combo for easy result comparison.
-# Override to a fixed name if you prefer.
+# This is just the filename — the output directory is set in run_benchmark.py.
 OUTPUT_FILE = (
     f"diagnostic_results"
     f"__diag-{DIAGNOSTIC_MODEL.replace(':', '-').replace('.', '')}"
@@ -489,7 +489,7 @@ def diagnose(
     }
 
 
-def save_results(results, output_file=OUTPUT_FILE):
+def save_results(results, output_file):
     with open(output_file, "w") as f:
         json.dump(results, f, indent=2)
     print(f"\n  Saved {len(results)} result(s) to {output_file}")
